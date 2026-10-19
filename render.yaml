@@ -12,15 +12,15 @@ services:
         value: production
       - key: LICENSE_SECRET
         generateValue: true
-      - key: STRIPE_SECRET_KEY
+      - key: PAYSTACK_SECRET_KEY
         sync: false
-      - key: STRIPE_WEBHOOK_SECRET
+      - key: PAYSTACK_PUBLIC_KEY
         sync: false
-      - key: STRIPE_PRICE_MONTHLY
+      - key: PAYSTACK_PRICE_MONTHLY
         sync: false
-      - key: STRIPE_PRICE_YEARLY
+      - key: PAYSTACK_PRICE_YEARLY
         sync: false
-      - key: STRIPE_PRICE_LIFETIME
+      - key: PAYSTACK_PRICE_LIFETIME
         sync: false
       - key: BASE_URL
         sync: false

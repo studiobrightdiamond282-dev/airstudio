@@ -774,8 +774,10 @@ refreshControlPanel();
       <div class="plan sel" data-plan="yearly"><span class="tag">BEST VALUE</span><div class="pname">Yearly</div><div class="price">$29.99</div><div class="per">per year · $2.50/mo</div></div>
       <div class="plan" data-plan="lifetime"><div class="pname">Lifetime</div><div class="price">$59.99</div><div class="per">one-time · yours forever</div></div>
     </div>
+    <label class="field">Your email (for license key delivery)</label>
+    <input class="input" id="checkoutEmail" placeholder="you@gmail.com" type="email">
     <button class="btn primary" id="checkoutBtn" style="width:100%;justify-content:center;padding:14px">Checkout (demo) → get my license key</button>
-    <p class="note" style="margin-top:8px;text-align:center">Demo checkout issues a real license key instantly. At launch this button becomes Stripe/Paddle checkout and the key arrives by email.</p>
+    <p class="note" style="margin-top:8px;text-align:center">Demo checkout issues a real license key instantly. At launch this button becomes Paystack checkout and the key arrives by email.</p>
 
     <div class="cmpfree" style="margin-top:20px">
       <div><div class="col-t" style="color:var(--muted)">Free</div>
@@ -966,27 +968,29 @@ refreshControlPanel();
       activate(j.key, 'demo');
     } catch { ptoast('Demo keys are disabled on this server.'); }
   });
-  /* Stripe mode when the server has keys configured; otherwise demo checkout */
-  let stripeEnabled = false;
+  /* Paystack mode when the server has keys configured; otherwise demo checkout */
+  let paystackEnabled = false;
   fetch('/api/config/public').then(r => r.json()).then(cfg => {
-    stripeEnabled = !!cfg.stripeEnabled;
+    paystackEnabled = !!cfg.paystackEnabled;
     if (stripeEnabled) {
       const b = document.getElementById('checkoutBtn');
-      b.textContent = 'Checkout with Stripe →';
-      if (b.nextElementSibling) b.nextElementSibling.textContent = 'Secure payment via Stripe. Your license key activates automatically when you return to this page.';
+      b.textContent = 'Checkout with Paystack →';
+      if (b.nextElementSibling) b.nextElementSibling.textContent = 'Secure payment via Paystack. Your license key activates automatically when you return to this page.';
     }
   }).catch(() => {});
 
   document.getElementById('checkoutBtn').addEventListener('click', async () => {
     const msg = document.getElementById('licMsg');
-    if (stripeEnabled) {
-      msg.style.color = 'var(--muted)'; msg.textContent = 'Redirecting to Stripe Checkout…';
+    const email = document.getElementById('checkoutEmail').value.trim();
+    if (paystackEnabled) {
+      if (!email) { msg.style.color = 'var(--red)'; msg.textContent = 'Please enter your email.'; return; }
+      msg.style.color = 'var(--muted)'; msg.textContent = 'Redirecting to Paystack Checkout…';
       try {
-        const j = await (await fetch('/api/checkout/stripe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: selectedPlan }) })).json();
+        const j = await (await fetch('/api/checkout/paystack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: selectedPlan, email }) })).json();
         if (j.ok && j.url) { location.href = j.url; return; }
         throw new Error(j.message || j.error || 'checkout failed');
       } catch (e) {
-        msg.style.color = 'var(--red)'; msg.textContent = 'Stripe checkout failed: ' + e.message;
+        msg.style.color = 'var(--red)'; msg.textContent = 'Paystack checkout failed: ' + e.message;
       }
       return;
     }
@@ -1014,14 +1018,14 @@ refreshControlPanel();
       }
     } catch {}
 
-    /* Returning from Stripe Checkout? Retrieve the issued key and activate. */
+    /* Returning from Paystack Checkout? Retrieve the issued key and activate. */
     try {
       const q = new URLSearchParams(location.search);
-      if (q.get('checkout') === 'success' && q.get('session_id') && !premium.active) {
+      if (q.get('checkout') === 'success' && q.get('reference') && !premium.active) {
         ptoast('💳 Payment received — fetching your license key…');
         for (let i = 0; i < 12 && !premium.active; i++) {
           try {
-            const j = await (await fetch('/api/license/by-session?session=' + encodeURIComponent(q.get('session_id')))).json();
+            const j = await (await fetch('/api/license/by-reference?reference=' + encodeURIComponent(q.get('reference')))).json();
             if (j.ok && j.key) { document.getElementById('licKey').value = j.key; await activate(j.key, j.plan); break; }
           } catch {}
           await new Promise(r => setTimeout(r, 1500));
@@ -1031,7 +1035,7 @@ refreshControlPanel();
         ptoast('Checkout cancelled — you are still on the Free plan.');
       }
       if (q.get('checkout')) {
-        q.delete('checkout'); q.delete('session_id');
+        q.delete('checkout'); q.delete('reference');
         history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : ''));
       }
     } catch {}

@@ -14,7 +14,7 @@ const QRCode = require('qrcode');
 /* ------------------------------------------------------------- licensing
    Key format: AIRS-XXXX-XXXX-CCCC  where CCCC = HMAC checksum of the body.
    Generate real keys with:  node tools/genkey.js
-   In production, keys are issued by the payment webhook (Stripe/Paddle)
+   In production, keys are issued by the payment webhook (Paystack)
    after checkout; the checkout-demo endpoint simulates that flow locally. */
 const LICENSE_SECRET = process.env.LICENSE_SECRET || 'airstudio-dev-secret-change-me';
 const KEY_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -38,23 +38,18 @@ function validKey(k) {
 const DEMO_KEY = makeKey();
 const IS_PROD = process.env.NODE_ENV === 'production';
 
-/* ------------------------------------------------- Stripe (optional)
-   Enabled when STRIPE_SECRET_KEY is set. See docs/STRIPE_SETUP.md.
-   Flow: Studio -> POST /api/checkout/stripe -> Stripe-hosted checkout ->
-   webhook /api/webhook/stripe issues a license key -> Studio polls
-   /api/license/by-session and activates automatically. */
-const STRIPE_SK = process.env.STRIPE_SECRET_KEY || '';
-const STRIPE_WHSEC = process.env.STRIPE_WEBHOOK_SECRET || '';
-const STRIPE_PRICES = {
-  monthly: process.env.STRIPE_PRICE_MONTHLY || '',
-  yearly: process.env.STRIPE_PRICE_YEARLY || '',
-  lifetime: process.env.STRIPE_PRICE_LIFETIME || '',
+/* ------------------------------------------------- Paystack (optional)
+   Enabled when PAYSTACK_SECRET_KEY is set. Works in Nigeria.
+   Flow: Studio -> POST /api/checkout/paystack -> Paystack-hosted checkout ->
+   webhook /api/webhook/paystack issues a license key -> Studio polls
+   /api/license/by-reference and activates automatically. */
+const PAYSTACK_SK = process.env.PAYSTACK_SECRET_KEY || '';
+const PAYSTACK_PK = process.env.PAYSTACK_PUBLIC_KEY || '';
+const PAYSTACK_PRICES = {
+  monthly: process.env.PAYSTACK_PRICE_MONTHLY || '',   // amount in kobo (e.g. 49900 for ₦499)
+  yearly: process.env.PAYSTACK_PRICE_YEARLY || '',       // amount in kobo (e.g. 299900 for ₦2,999)
+  lifetime: process.env.PAYSTACK_PRICE_LIFETIME || '',   // amount in kobo (e.g. 599900 for ₦5,999)
 };
-let stripe = null;
-if (STRIPE_SK) {
-  try { stripe = require('stripe')(STRIPE_SK); }
-  catch { console.warn('stripe package missing — run: npm install stripe'); }
-}
 const ISSUED_FILE = path.join(__dirname, 'issued-licenses.json');
 let issued = {};
 try { issued = JSON.parse(fs.readFileSync(ISSUED_FILE, 'utf8')); } catch {}
@@ -102,63 +97,74 @@ const server = http.createServer(async (req, res) => {
   // Public config (which checkout path the Studio should use)
   if (url.pathname === '/api/config/public') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ stripeEnabled: !!stripe, demoEnabled: !IS_PROD }));
+    res.end(JSON.stringify({ paystackEnabled: !!PAYSTACK_SK, demoEnabled: !IS_PROD }));
     return;
   }
 
-  // Create a Stripe Checkout session (real payments)
-  if (url.pathname === '/api/checkout/stripe' && req.method === 'POST') {
+  // Create a Paystack transaction (real payments)
+  if (url.pathname === '/api/checkout/paystack' && req.method === 'POST') {
     let body = '';
     req.on('data', c => { body += c; if (body.length > 4096) req.destroy(); });
     req.on('end', async () => {
-      if (!stripe) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'stripe_not_configured' })); return; }
+      if (!PAYSTACK_SK) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'paystack_not_configured' })); return; }
       let plan = 'yearly';
       try { plan = JSON.parse(body).plan || plan; } catch {}
-      const price = STRIPE_PRICES[plan];
-      if (!price) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'unknown_plan_or_missing_price' })); return; }
+      const amountKobo = PAYSTACK_PRICES[plan];
+      if (!amountKobo) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'unknown_plan_or_missing_price' })); return; }
+      const email = (JSON.parse(body) || {}).email || '';
+      if (!email) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'email_required' })); return; }
       const proto = req.headers['x-forwarded-proto'] || 'http';
       const base = process.env.BASE_URL || `${proto}://${req.headers.host}`;
+      const reference = `AIRS-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       try {
-        const session = await stripe.checkout.sessions.create({
-          mode: plan === 'lifetime' ? 'payment' : 'subscription',
-          line_items: [{ price, quantity: 1 }],
-          success_url: `${base}/studio?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${base}/studio?checkout=cancel`,
-          metadata: { plan },
-          allow_promotion_codes: true,
+        const resp = await fetch('https://api.paystack.co/transaction/initialize', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${PAYSTACK_SK}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            email,
+            amount: parseInt(amountKobo, 10),
+            reference,
+            metadata: { plan, product: 'AirStudio Premium' },
+            callback_url: `${base}/studio?checkout=success&reference=${reference}`,
+          }),
         });
+        const data = await resp.json();
+        if (!data.status) {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'paystack_error', message: data.message || 'initialize failed' }));
+          return;
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, url: session.url }));
+        res.end(JSON.stringify({ ok: true, url: data.data.authorization_url, reference }));
       } catch (e) {
         res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'stripe_error', message: String(e.message || e).slice(0, 200) }));
+        res.end(JSON.stringify({ ok: false, error: 'paystack_error', message: String(e.message || e).slice(0, 200) }));
       }
     });
     return;
   }
 
-  // Stripe webhook — issues the license key after payment (raw body required for signature check)
-  if (url.pathname === '/api/webhook/stripe' && req.method === 'POST') {
+  // Paystack webhook — issues the license key after payment
+  if (url.pathname === '/api/webhook/paystack' && req.method === 'POST') {
     const chunks = [];
     req.on('data', c => chunks.push(c));
-    req.on('end', () => {
+    req.on('end', async () => {
       const raw = Buffer.concat(chunks);
       let event = null;
-      if (stripe && STRIPE_WHSEC) {
-        try { event = stripe.webhooks.constructEvent(raw, req.headers['stripe-signature'], STRIPE_WHSEC); }
-        catch { res.writeHead(400); res.end('bad signature'); return; }
-      } else {
-        if (IS_PROD) { res.writeHead(400); res.end('webhook secret not configured'); return; }
-        try { event = JSON.parse(raw.toString('utf8')); } catch { res.writeHead(400); res.end('bad json'); return; }
-      }
-      if (event.type === 'checkout.session.completed') {
-        const s = event.data.object || {};
-        const plan = (s.metadata && s.metadata.plan) || 'premium';
-        const email = (s.customer_details && s.customer_details.email) || null;
+      try { event = JSON.parse(raw.toString('utf8')); } catch { res.writeHead(400); res.end('bad json'); return; }
+      const eventType = event.event || event.type || '';
+      const data = event.data || {};
+      if (eventType === 'charge.success') {
+        const reference = data.reference || data.id || '';
+        const plan = (data.metadata && data.metadata.plan) || 'premium';
+        const email = data.customer && data.customer.email ? data.customer.email : (data.email || null);
         const key = makeKey();
-        recordIssued(s.id, { key, plan, email, at: new Date().toISOString() });
-        console.log(`[stripe] paid (${plan}) -> license ${key}${email ? ' for ' + email : ''}`);
-        // Launch TODO: also email the key (Resend/SendGrid/SES). The Studio retrieves it via /api/license/by-session.
+        recordIssued(reference, { key, plan, email, at: new Date().toISOString() });
+        console.log(`[paystack] paid (${plan}) -> license ${key}${email ? ' for ' + email : ''} ref=${reference}`);
+        // The Studio retrieves it via /api/license/by-reference?reference=...
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ received: true }));
@@ -166,9 +172,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Studio polls this after returning from Stripe Checkout
-  if (url.pathname === '/api/license/by-session') {
-    const rec = issued[url.searchParams.get('session') || ''];
+  // Studio polls this after returning from Paystack Checkout
+  if (url.pathname === '/api/license/by-reference') {
+    const rec = issued[url.searchParams.get('reference') || ''];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(rec ? { ok: true, key: rec.key, plan: rec.plan } : { ok: false }));
     return;
@@ -200,7 +206,7 @@ const server = http.createServer(async (req, res) => {
       let plan = 'yearly';
       try { plan = JSON.parse(body).plan || plan; } catch {}
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, key: makeKey(), plan, note: 'Demo checkout — in production this key is emailed after Stripe/Paddle payment.' }));
+      res.end(JSON.stringify({ ok: true, key: makeKey(), plan, note: 'Demo checkout — in production this key is emailed after Paystack payment.' }));
     });
     return;
   }
