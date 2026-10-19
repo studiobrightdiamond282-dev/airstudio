@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "▶ AirStudio Server",
+      "program": "${workspaceFolder}/server.js",
+      "env": { "PORT": "3000" },
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "🔑 Generate License Keys",
+      "program": "${workspaceFolder}/tools/genkey.js",
+      "args": ["5"],
+      "console": "integratedTerminal"
+    }
+  ]
+}

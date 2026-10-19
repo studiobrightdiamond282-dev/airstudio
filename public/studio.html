@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AirStudio — Control Room</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#070a14">
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { min-height: 100dvh; display: flex; flex-direction: column; }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 12px 18px;
+    border-bottom: 1px solid var(--line); background: rgba(9,13,26,.8); backdrop-filter: blur(8px);
+    position: sticky; top: 0; z-index: 20; flex-wrap: wrap;
+  }
+  .logo { display: flex; align-items: center; gap: 9px; font-weight: 800; font-size: 17px; }
+  .code-pill { font-family: var(--mono); font-weight: 800; letter-spacing: .3em; font-size: 15px; background: #131c38; border: 1px dashed #35509c; padding: 6px 12px 6px 16px; border-radius: 9px; }
+  main { flex: 1; display: grid; grid-template-columns: minmax(0,1fr) 360px; gap: 14px; padding: 14px; max-width: 1600px; width: 100%; margin: 0 auto; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+
+  .monitor { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); aspect-ratio: 16/9; }
+  .monitor video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  .monitor .overlay-top { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; gap: 8px; pointer-events: none; }
+  .monitor .empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--muted); text-align: center; padding: 20px; }
+  .transport { display: flex; gap: 8px; align-items: center; padding: 10px 0 2px; flex-wrap: wrap; }
+  .rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; animation: pulse 1s infinite; display: none; }
+  .meterwrap { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .meter { width: 110px; height: 9px; background: #131c38; border-radius: 99px; overflow: hidden; border: 1px solid var(--line); }
+  .meter > div { height: 100%; width: 0%; background: linear-gradient(90deg, var(--green), var(--amber), var(--red)); transition: width .07s; }
+
+  .camstrip { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 12px; margin-top: 14px; }
+  .camcard { overflow: hidden; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+  .camcard .thumb { position: relative; aspect-ratio: 16/9; background: #000; }
+  .camcard video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .camcard .badges { position: absolute; bottom: 6px; left: 6px; right: 6px; display: flex; gap: 5px; flex-wrap: wrap; }
+  .camcard .meta { padding: 10px 12px; display: flex; align-items: center; gap: 8px; }
+  .camcard .meta .nm { font-weight: 700; font-size: 13.5px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .camcard.program { border-color: #ef4444; box-shadow: 0 0 0 1px #ef4444, 0 10px 30px rgba(239,68,68,.18); }
+  .camcard.controlled { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .badge { font-family: var(--mono); font-size: 10px; background: rgba(4,7,16,.78); border: 1px solid rgba(255,255,255,.14); padding: 2.5px 6px; border-radius: 6px; color: #cfd8f8; }
+  .badge.ai { color: #e9d5ff; border-color: #7e57c2; }
+
+  .sidecol { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .panel.pad { padding: 16px; }
+  .panel h3.title { font-size: 12px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .panel h3.title .right { margin-left: auto; letter-spacing: 0; text-transform: none; }
+  .qrbox { display: flex; gap: 14px; align-items: center; }
+  .qrbox img { width: 112px; height: 112px; border-radius: 10px; background: #fff; flex: none; }
+  .lensgrid { display: flex; flex-wrap: wrap; gap: 7px; }
+  .ptzpad { position: relative; height: 92px; border: 1px solid var(--line); border-radius: 10px; background: radial-gradient(circle at center, #16204a 0, #0a0f22 70%); cursor: crosshair; overflow: hidden; }
+  .ptzpad .frame { position: absolute; border: 1.5px solid var(--accent2); border-radius: 6px; background: rgba(177,108,255,.12); pointer-events: none; }
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .note { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+  .kv { display: flex; justify-content: space-between; font-size: 12.5px; padding: 4.5px 0; border-bottom: 1px dashed #182344; }
+  .kv:last-child { border: none; }
+  .kv b { font-family: var(--mono); font-weight: 600; color: #cfd8ff; }
+  #spark { width: 100%; height: 56px; display: block; }
+  .disabled-note { opacity: .45; }
+  details.help summary { cursor: pointer; font-weight: 700; font-size: 13px; padding: 4px 0; }
+  details.help p, details.help li { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+  details.help ol { padding-left: 18px; margin: 6px 0; }
+  code { font-family: var(--mono); font-size: 11.5px; background: #0a1024; border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; color: #b9c4ff; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <img src="/icons/icon-192.png" alt="AirStudio logo" style="width:30px;height:30px;border-radius:50%">
+    Air<span class="grad-text">Studio</span>
+  </div>
+  <span class="chip" id="wsChip"><span class="dot"></span> connecting</span>
+  <span style="color:var(--muted);font-size:12px">Pairing code</span>
+  <span class="code-pill" id="codeText">······</span>
+  <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn small" id="copyCamLink">🔗 Copy phone link</button>
+    <button class="btn small" id="copyOutLink">📡 Copy OBS output URL</button>
+    <a class="btn small primary" id="openOutput" target="_blank" rel="noopener">▶ Clean Program Output</a>
+  </div>
+</header>
+
+<main>
+  <!-- ============================ LEFT ============================ -->
+  <div>
+    <div class="monitor" id="monitor">
+      <video id="programVideo" autoplay playsinline muted></video>
+      <div class="overlay-top">
+        <span class="chip live" id="pgmChip" style="visibility:hidden"><span class="dot pulse"></span> PROGRAM</span>
+        <span class="badge" id="pgmStats" style="visibility:hidden"></span>
+      </div>
+      <div class="empty" id="pgmEmpty">
+        <div style="font-size:34px">📱➜🖥️</div>
+        <div style="font-weight:700;color:var(--text)">No camera on air yet</div>
+        <div style="font-size:13px;max-width:380px">Scan the QR code with your phone (or open the phone link and type the pairing code). Up to 4 phones can join this studio.</div>
+      </div>
+    </div>
+
+    <div class="transport">
+      <button class="btn small" id="snapBtn">📸 Snapshot</button>
+      <button class="btn small" id="recBtn">⏺ Record program</button>
+      <span class="rec-dot" id="recDot"></span><span class="note" id="recTime"></span>
+      <button class="btn small" id="fsBtn">⛶ Fullscreen</button>
+      <div class="meterwrap">
+        <button class="btn small" id="soundBtn">🔇 Sound off</button>
+        <div class="meter"><div id="meterFill"></div></div>
+      </div>
+    </div>
+
+    <div class="camstrip" id="camStrip"></div>
+
+    <div class="panel pad" style="margin-top:14px">
+      <h3 class="title">📱 Pair a phone</h3>
+      <div class="qrbox">
+        <img id="qrImg" alt="QR code to pair phone">
+        <div style="min-width:0">
+          <p class="note" style="font-size:12.5px">Scan with any Android / iPhone camera — no app install. The phone joins pre-paired to this studio.<br><br>
+          Or open <code id="camUrlText"></code> and enter code <b id="codeText2" style="color:var(--text)"></b>.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel pad" style="margin-top:14px">
+      <h3 class="title">🚀 Go live with this feed</h3>
+      <details class="help" open>
+        <summary>OBS Studio (recommended — zero extra load)</summary>
+        <ol>
+          <li>Click <b>Copy OBS output URL</b> above.</li>
+          <li>In OBS: Sources → <b>+ → Browser</b>, paste the URL, set width 1920 × 1080.</li>
+          <li>The clean output follows your PROGRAM switching automatically. For Zoom/Teams calls, start OBS <b>Virtual Camera</b> and select it in the meeting app.</li>
+        </ol>
+      </details>
+      <details class="help">
+        <summary>Zoom / Teams / Meet without OBS</summary>
+        <p>Open <b>Clean Program Output</b>, full-screen it (F11), then in your meeting choose <b>Share screen/window</b> and pick that window. A native virtual-camera driver (so AirStudio appears directly in camera menus) ships with the native desktop app — see the project roadmap.</p>
+      </details>
+    </div>
+  </div>
+
+  <!-- ============================ RIGHT ============================ -->
+  <div class="sidecol">
+
+    <div class="panel pad" id="camCtlPanel">
+      <h3 class="title">🎛️ Camera controls <span class="right note" id="ctlTarget">no camera</span></h3>
+
+      <label class="field">Lens — dynamic multi-lens engine</label>
+      <div class="lensgrid" id="lensGrid"><span class="note">Waiting for a phone…</span></div>
+
+      <div class="twocol" style="margin-top:14px">
+        <div>
+          <label class="field">Resolution</label>
+          <select class="input" id="resSel">
+            <option value="854x480">480p</option>
+            <option value="1280x720">720p HD</option>
+            <option value="1920x1080" selected>1080p Full HD</option>
+            <option value="2560x1440">1440p QHD</option>
+            <option value="3840x2160">2160p · 4K UHD</option>
+          </select>
+        </div>
+        <div>
+          <label class="field">Frame rate</label>
+          <select class="input" id="fpsSel">
+            <option value="24">24 fps · film</option>
+            <option value="30" selected>30 fps</option>
+            <option value="60">60 fps</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="ctl-row"><div><div class="lab">Zoom</div><div class="sub" id="zoomSub">hardware when available</div></div><span class="val" id="zoomVal">1.0×</span></div>
+      <input type="range" id="zoomRange" min="1" max="4" step="0.05" value="1">
+
+      <div class="ctl-row"><div><div class="lab">Exposure compensation</div><div class="sub" data-cap-note>EV stops</div></div><span class="val" id="evVal">0.0</span></div>
+      <input type="range" id="evRange" min="-2" max="2" step="0.1" value="0">
+
+      <div class="ctl-row"><div><div class="lab">White balance</div><div class="sub">Kelvin · uncheck Auto for manual</div></div>
+        <label style="display:flex;align-items:center;gap:7px;font-size:12px"><input type="checkbox" id="wbAuto" checked> Auto</label><span class="val" id="wbVal">5600K</span></div>
+      <input type="range" id="wbRange" min="2800" max="8000" step="50" value="5600">
+
+      <div class="ctl-row"><div><div class="lab">Focus</div><div class="sub">mode</div></div>
+        <select class="input" id="focusSel" style="width:150px;padding:7px 9px">
+          <option value="continuous">Continuous AF</option>
+          <option value="single-shot">Single-shot AF</option>
+          <option value="manual">Manual</option>
+        </select></div>
+      <div class="ctl-row"><div><div class="lab">Manual focus distance</div><div class="sub">metres (manual mode)</div></div><span class="val" id="fdVal">–</span></div>
+      <input type="range" id="fdRange" min="0.05" max="5" step="0.05" value="0.6">
+
+      <div class="ctl-row" id="isoRow"><div><div class="lab">ISO (manual exposure)</div><div class="sub">uncheck Auto exposure for manual</div></div>
+        <label style="display:flex;align-items:center;gap:7px;font-size:12px"><input type="checkbox" id="expAuto" checked> Auto</label><span class="val" id="isoVal">400</span></div>
+      <input type="range" id="isoRange" min="50" max="3200" step="50" value="400">
+
+      <div class="ctl-row"><div><div class="lab">🔦 Torch</div><div class="sub" id="torchSub">phone flashlight</div></div>
+        <label class="switch"><input type="checkbox" id="torchSw"><span class="track"></span></label></div>
+      <div class="ctl-row"><div><div class="lab">🎙️ Phone microphone</div><div class="sub">routed to program audio</div></div>
+        <label class="switch"><input type="checkbox" id="micSw" checked><span class="track"></span></label></div>
+      <div class="ctl-row"><div><div class="lab">🪞 Mirror image</div><div class="sub">flip horizontally</div></div>
+        <label class="switch"><input type="checkbox" id="mirrorSw"><span class="track"></span></label></div>
+      <div class="ctl-row"><div><div class="lab">🌙 Battery-saver dim</div><div class="sub">near-black phone screen, less heat</div></div>
+        <label class="switch"><input type="checkbox" id="dimSw"><span class="track"></span></label></div>
+      <p class="note" id="capNote" style="margin-top:8px"></p>
+    </div>
+
+    <div class="panel pad">
+      <h3 class="title">🤖 AI &amp; look <span class="right chip on">runs on the phone</span></h3>
+      <label class="field">Background — AI segmentation, no green screen</label>
+      <div class="lensgrid" id="bgModeGrid">
+        <button class="btn small active" data-bgmode="off">Off</button>
+        <button class="btn small" data-bgmode="blur">🌫️ Blur</button>
+        <button class="btn small" data-bgmode="image">🖼️ Virtual</button>
+      </div>
+      <div id="bgBlurOpts" style="display:none">
+        <div class="ctl-row"><div class="lab">Blur strength</div><span class="val" id="bgVal">16px</span></div>
+        <input type="range" id="bgRange" min="4" max="40" step="1" value="16">
+      </div>
+      <div id="bgImgOpts" style="display:none;margin-top:6px">
+        <div class="lensgrid" id="bgPresetGrid">
+          <button class="btn small active" data-bgpreset="office">🏢 Office</button>
+          <button class="btn small" data-bgpreset="studio">✨ Studio</button>
+          <button class="btn small" data-bgpreset="gradient">🌈 Gradient</button>
+          <button class="btn small" data-bgpreset="solid">⬛ Solid</button>
+          <label class="btn small" style="cursor:pointer">⬆ Upload…<input type="file" id="bgUpload" accept="image/*" style="display:none"></label>
+        </div>
+        <p class="note" style="margin-top:6px">Presets are generated on the phone; uploads are downscaled &amp; sent straight to it. Your PC still does zero AI work.</p>
+      </div>
+      <div class="ctl-row"><div><div class="lab">Beauty smoothing</div><div class="sub">soft-skin blend</div></div><span class="val" id="beautyVal">0%</span></div>
+      <input type="range" id="beautyRange" min="0" max="100" step="5" value="0">
+      <div class="ctl-row"><div><div class="lab">Low-light enhancement</div><div class="sub">lift shadows + saturation</div></div>
+        <label class="switch"><input type="checkbox" id="llSw"><span class="track"></span></label></div>
+
+      <div class="ctl-row"><div><div class="lab">🎯 AI Auto-Framing</div><div class="sub">face tracking · Center-Stage style, runs on phone</div></div>
+        <label class="switch"><input type="checkbox" id="afSw"><span class="track"></span></label></div>
+
+      <label class="field" style="margin-top:10px">Digital PTZ — drag the frame, scroll slider to punch in</label>
+      <div class="ptzpad" id="ptzPad"><div class="frame" id="ptzFrame"></div></div>
+      <div class="ctl-row"><div class="lab">Punch-in</div><span class="val" id="ptzVal">1.0×</span>
+        <button class="btn small" id="ptzReset">Reset framing</button></div>
+      <input type="range" id="ptzRange" min="1" max="3.5" step="0.05" value="1">
+      <p class="note">With 🎯 Auto-Framing on, the phone's face-tracking AI drives this frame for you (smooth pan/zoom, face on the upper third) — manual PTZ pauses until you switch it off.</p>
+    </div>
+
+    <div class="panel pad">
+      <h3 class="title">📜 Teleprompter</h3>
+      <textarea class="input" id="promptText" rows="4" placeholder="Type your script here… it scrolls on the phone, right under the lens.">Welcome back to the channel! Today we're testing AirStudio — your phone, reborn as a 4K studio camera. No webcam, no cables, no compromises.</textarea>
+      <div style="display:flex;gap:7px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn small primary" id="promptSend">Send to phones</button>
+        <button class="btn small" id="promptPlay">▶ Play</button>
+        <button class="btn small" id="promptRestart">⏮ Restart</button>
+        <button class="btn small" id="promptClear">Clear</button>
+      </div>
+      <div class="ctl-row"><div class="lab">Scroll speed</div><span class="val" id="psVal">40</span></div>
+      <input type="range" id="promptSpeed" min="5" max="140" step="5" value="40">
+      <div class="ctl-row"><div class="lab">Text size</div><span class="val" id="pszVal">21px</span></div>
+      <input type="range" id="promptSize" min="14" max="38" step="1" value="21">
+    </div>
+
+    <div class="panel pad">
+      <h3 class="title">📊 Live telemetry <span class="right note" id="statsTarget"></span></h3>
+      <canvas id="spark" width="640" height="112"></canvas>
+      <div class="kv"><span>Bitrate (inbound)</span><b id="stBitrate">–</b></div>
+      <div class="kv"><span>Resolution / fps</span><b id="stRes">–</b></div>
+      <div class="kv"><span>Network RTT</span><b id="stRtt">–</b></div>
+      <div class="kv"><span>Jitter / packets lost</span><b id="stJitter">–</b></div>
+      <div class="kv"><span>Phone battery</span><b id="stBatt">–</b></div>
+      <div class="kv"><span>Processing location</span><b id="stFx">–</b></div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+'use strict';
+/* ============================================================================
+   AirStudio Studio — receiver, switcher, remote control, telemetry
+============================================================================ */
+const $ = s => document.querySelector(s);
+const ICE = { iceServers: [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+]};
+
+const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const genCode = () => Array.from({ length: 6 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
+const params = new URLSearchParams(location.search);
+const ROOM = (params.get('code') || genCode()).toUpperCase();
+if (!params.get('code')) history.replaceState(null, '', '/studio?code=' + ROOM);
+
+const camUrl = `${location.origin}/camera?code=${ROOM}`;
+const outUrl = `${location.origin}/output?code=${ROOM}`;
+$('#codeText').textContent = ROOM;
+$('#codeText2').textContent = ROOM;
+$('#camUrlText').textContent = camUrl;
+$('#qrImg').src = '/api/qr?text=' + encodeURIComponent(camUrl);
+$('#openOutput').href = outUrl;
+$('#copyCamLink').onclick = () => copy(camUrl, 'Phone link copied');
+$('#copyOutLink').onclick = () => copy(outUrl, 'OBS output URL copied');
+function copy(text, msg) { navigator.clipboard?.writeText(text).then(() => flash(msg)); }
+function flash(msg) {
+  const c = $('#wsChip'); const old = c.innerHTML;
+  c.innerHTML = '✓ ' + msg; setTimeout(() => c.innerHTML = old, 1800);
+}
+
+const cams = new Map();   // peerId -> {pc, stream, name, caps, state, cardEl, videoEl, history[], lastBytes,lastT, kbps, fps, rtt, jitter, lost}
+let programId = null, controlId = null;
+let ws = null;
+
+/* ------------------------------------------------------------------ WS */
+function connectWS() {
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
+  ws.onopen = () => {
+    $('#wsChip').innerHTML = '<span class="dot pulse" style="color:var(--green)"></span> studio live';
+    $('#wsChip').className = 'chip on';
+    ws.send(JSON.stringify({ type: 'join', room: ROOM, role: 'studio', name: 'Studio' }));
+  };
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.type === 'welcome') {
+      for (const p of m.peers) if (p.role === 'camera') ensureCam(p);
+    } else if (m.type === 'peer-joined') {
+      if (m.peer.role === 'camera') ensureCam(m.peer);
+    } else if (m.type === 'peer-updated') {
+      const c = cams.get(m.peer.id);
+      if (c) { c.caps = m.peer.caps; c.name = m.peer.name; if (controlId === c.id) refreshControlPanel(); renderCard(c); }
+    } else if (m.type === 'peer-left') {
+      removeCam(m.id);
+    } else if (m.type === 'relay') {
+      if (m.kind === 'signal') onSignal(m.from, m.data);
+      else if (m.kind === 'state') onCamState(m.from, m.data);
+    }
+  };
+  ws.onclose = () => { $('#wsChip').innerHTML = '<span class="dot"></span> reconnecting…'; $('#wsChip').className = 'chip'; setTimeout(connectWS, 2000); };
+}
+const relay = (to, kind, data) => ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'relay', to, kind, data }));
+const relayRole = (role, kind, data) => ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'relay-role', role, kind, data }));
+const control = data => { if (window.__premiumGate && !window.__premiumGate(data)) return; if (controlId) relay(controlId, 'control', data); };
+
+/* --------------------------------------------------------------- cameras */
+function ensureCam(peer) {
+  if (cams.has(peer.id)) return cams.get(peer.id);
+  const el = document.createElement('div');
+  el.className = 'camcard panel';
+  el.innerHTML = `
+    <div class="thumb"><video autoplay playsinline muted></video><div class="badges"></div></div>
+    <div class="meta"><span class="nm"></span>
+      <button class="btn small cut">CUT ⏵ Program</button>
+    </div>`;
+  $('#camStrip').appendChild(el);
+  const cam = { id: peer.id, name: peer.name, caps: peer.caps, state: null, pc: null, stream: null,
+                cardEl: el, videoEl: el.querySelector('video'), history: [], lastBytes: 0, lastT: 0, kbps: 0, fps: 0 };
+  cams.set(peer.id, cam);
+  el.addEventListener('click', e => { if (!e.target.classList.contains('cut')) selectControl(peer.id); });
+  el.querySelector('.cut').addEventListener('click', () => setProgram(peer.id));
+  if (!programId) setProgram(peer.id);
+  if (!controlId) selectControl(peer.id);
+  renderCard(cam);
+  return cam;
+}
+function removeCam(id) {
+  const c = cams.get(id); if (!c) return;
+  c.pc?.close(); c.cardEl.remove(); cams.delete(id);
+  if (programId === id) { programId = null; const first = cams.keys().next().value; if (first) setProgram(first); else showEmptyProgram(); }
+  if (controlId === id) { controlId = null; const first = cams.keys().next().value; if (first) selectControl(first); else refreshControlPanel(); }
+}
+function renderCard(c) {
+  c.cardEl.querySelector('.nm').textContent = c.state?.name || c.name || 'Camera';
+  const s = c.state, badges = [];
+  if (s?.settings?.width) badges.push(`${s.settings.width}×${s.settings.height}`);
+  if (c.fps) badges.push(c.fps + 'fps');
+  if (c.kbps) badges.push((c.kbps / 1000).toFixed(1) + ' Mb/s');
+  if (s?.battery) badges.push((s.battery.charging ? '⚡' : '🔋') + s.battery.level + '%');
+  if (s?.processing) badges.push('AI·FX');
+  c.cardEl.querySelector('.badges').innerHTML = badges.map(b => `<span class="badge${b === 'AI·FX' ? ' ai' : ''}">${b}</span>`).join('');
+  c.cardEl.classList.toggle('program', programId === c.id);
+  c.cardEl.classList.toggle('controlled', controlId === c.id && programId !== c.id);
+  c.cardEl.querySelector('.cut').textContent = programId === c.id ? '● ON AIR' : 'CUT ⏵ Program';
+  c.cardEl.querySelector('.cut').classList.toggle('danger', programId === c.id);
+}
+
+function setProgram(id) {
+  programId = id;
+  const c = cams.get(id);
+  const v = $('#programVideo');
+  if (c?.stream) { v.srcObject = c.stream; showProgramChrome(); }
+  attachAudio(c?.stream);
+  relayRole('output', 'program', { cameraId: id });
+  for (const cam of cams.values()) renderCard(cam);
+  updatePgmStats();
+}
+function showProgramChrome() {
+  $('#pgmEmpty').style.display = 'none';
+  $('#pgmChip').style.visibility = 'visible';
+  $('#pgmStats').style.visibility = 'visible';
+}
+function showEmptyProgram() {
+  $('#programVideo').srcObject = null;
+  $('#pgmEmpty').style.display = 'flex';
+  $('#pgmChip').style.visibility = 'hidden';
+  $('#pgmStats').style.visibility = 'hidden';
+  attachAudio(null);
+}
+function updatePgmStats() {
+  const c = cams.get(programId); if (!c) return;
+  const s = c.state?.settings || {};
+  $('#pgmStats').textContent = `${c.state?.name || c.name} · ${s.width || '–'}×${s.height || '–'} · ${c.fps || '–'}fps · ${(c.kbps / 1000).toFixed(1)} Mb/s`;
+}
+
+/* ---------------------------------------------------------------- WebRTC */
+async function onSignal(from, data) {
+  const cam = ensureCam({ id: from, name: 'Camera' });
+  if (!cam.pc) {
+    const pc = new RTCPeerConnection(ICE);
+    cam.pc = pc;
+    pc.onicecandidate = e => { if (e.candidate) relay(from, 'signal', { candidate: e.candidate }); };
+    pc.ontrack = e => {
+      cam.stream = e.streams[0] || new MediaStream([e.track]);
+      if (cam.videoEl.srcObject !== cam.stream) cam.videoEl.srcObject = cam.stream;
+      if (programId === from) { $('#programVideo').srcObject = cam.stream; showProgramChrome(); attachAudio(cam.stream); }
+    };
+    pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed' || pc.connectionState === 'closed') cam.pc = null; };
+  }
+  try {
+    if (data.sdp) {
+      await cam.pc.setRemoteDescription(data.sdp);
+      if (data.sdp.type === 'offer') {
+        const ans = await cam.pc.createAnswer();
+        await cam.pc.setLocalDescription(ans);
+        relay(from, 'signal', { sdp: cam.pc.localDescription });
+      }
+    } else if (data.candidate) await cam.pc.addIceCandidate(data.candidate);
+  } catch (e) { console.warn('signal', e); }
+}
+
+function onCamState(id, st) {
+  const c = cams.get(id); if (!c) return;
+  c.state = st;
+  if (st.lenses) { c.caps = { ...(c.caps || {}), lenses: st.lenses, currentDeviceId: st.currentDeviceId, track: st.trackCaps }; }
+  renderCard(c);
+  if (programId === id) updatePgmStats();
+  if (controlId === id) { syncStateToPanel(st); }
+}
+
+/* --------------------------------------------------------- control panel */
+function selectControl(id) {
+  controlId = id;
+  for (const cam of cams.values()) renderCard(cam);
+  refreshControlPanel();
+  if (window.__onCamSelected) window.__onCamSelected(id);
+}
+function refreshControlPanel() {
+  const c = cams.get(controlId);
+  $('#ctlTarget').textContent = c ? (c.state?.name || c.name) : 'no camera';
+  $('#statsTarget').textContent = c ? (c.state?.name || c.name) : '';
+  const grid = $('#lensGrid');
+  const lenses = c?.caps?.lenses || [];
+  if (!lenses.length) {
+    grid.innerHTML = `<button class="btn small" data-facing="environment">Back camera</button><button class="btn small" data-facing="user">Front camera</button>`;
+  } else {
+    grid.innerHTML = lenses.map(l => `<button class="btn small ${l.deviceId === c.caps.currentDeviceId ? 'active' : ''}" data-device="${l.deviceId}">${escapeHtml(l.label)}</button>`).join('');
+  }
+  grid.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    control(b.dataset.device ? { action: 'lens', deviceId: b.dataset.device } : { action: 'lens', facing: b.dataset.facing });
+    grid.querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
+  }));
+
+  const tc = c?.caps?.track || {};
+  // Zoom range from hardware caps if present
+  const zr = $('#zoomRange');
+  if (tc.zoom) { zr.min = tc.zoom.min; zr.max = tc.zoom.max; zr.step = tc.zoom.step || 0.1; $('#zoomSub').textContent = `hardware optical/digital · ${tc.zoom.min}–${tc.zoom.max}×`; }
+  else { zr.min = 1; zr.max = 4; zr.step = 0.05; $('#zoomSub').textContent = 'digital PTZ fallback (browser hides HW zoom)'; }
+  const er = $('#evRange');
+  if (tc.exposureCompensation) { er.min = tc.exposureCompensation.min; er.max = tc.exposureCompensation.max; er.step = tc.exposureCompensation.step || 0.1; er.disabled = false; }
+  else er.disabled = true;
+  const wr = $('#wbRange');
+  if (tc.colorTemperature) { wr.min = tc.colorTemperature.min; wr.max = tc.colorTemperature.max; wr.step = tc.colorTemperature.step || 50; wr.disabled = false; }
+  else wr.disabled = true;
+  const fr = $('#fdRange');
+  if (tc.focusDistance) { fr.min = tc.focusDistance.min; fr.max = Math.min(tc.focusDistance.max || 5, 10); fr.step = tc.focusDistance.step || 0.05; fr.disabled = false; }
+  else fr.disabled = true;
+  const ir = $('#isoRange');
+  if (tc.iso) { ir.min = tc.iso.min; ir.max = tc.iso.max; ir.step = tc.iso.step || 50; ir.disabled = false; $('#isoRow').classList.remove('disabled-note'); }
+  else { ir.disabled = true; $('#isoRow').classList.add('disabled-note'); }
+  $('#torchSw').disabled = !tc.torch;
+  $('#torchSub').textContent = tc.torch ? 'phone flashlight' : 'not exposed by this phone browser';
+
+  const missing = [];
+  if (!tc.exposureCompensation) missing.push('exposure comp');
+  if (!tc.colorTemperature) missing.push('white balance');
+  if (!tc.focusDistance) missing.push('manual focus');
+  if (!tc.torch) missing.push('torch');
+  $('#capNote').textContent = c
+    ? (missing.length ? `This browser doesn't expose ${missing.join(', ')} to web pages (common on iOS Safari). The native AirStudio app unlocks full Camera2 / AVFoundation manual control.` : 'Full manual hardware control available on this device. 🎉')
+    : '';
+
+  if (c?.state) syncStateToPanel(c.state);
+}
+function syncStateToPanel(st) {
+  $('#torchSw').checked = !!st.torch;
+  $('#micSw').checked = st.micOn !== false;
+  $('#dimSw').checked = !!st.dim;
+  $('#mirrorSw').checked = !!st.fx?.mirror;
+  $('#llSw').checked = !!st.fx?.lowlight;
+  if (st.fx && typeof applyBgUI === 'function') {
+    const m = st.fx.bgmode || (st.fx.bgblur ? 'blur' : 'off');
+    if (m !== bgMode) { bgMode = m; applyBgUI(); }
+    if (st.fx.bgPreset && st.fx.bgPreset !== bgPreset) { bgPreset = st.fx.bgPreset; applyBgUI(); }
+  }
+  const afSwEl = document.getElementById('afSw'); if (afSwEl) afSwEl.checked = !!st.fx?.autoframe;
+  if (document.activeElement !== $('#beautyRange')) { $('#beautyRange').value = st.fx?.beauty || 0; $('#beautyVal').textContent = (st.fx?.beauty || 0) + '%'; }
+  $('#stBatt').textContent = st.battery ? `${st.battery.level}% ${st.battery.charging ? '(charging ⚡)' : ''}` : 'not reported';
+  $('#stFx').textContent = st.processing ? '📱 On phone (0% PC CPU)' : 'raw passthrough';
+  const c = cams.get(controlId);
+  if (c?.caps?.lenses && st.currentDeviceId && c.caps.currentDeviceId !== st.currentDeviceId) { c.caps.currentDeviceId = st.currentDeviceId; refreshControlPanel(); }
+}
+const escapeHtml = s => String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+
+/* ------------------------------------------------------------ wire controls */
+$('#resSel').addEventListener('change', e => { const [w, h] = e.target.value.split('x').map(Number); control({ action: 'resolution', width: w, height: h }); });
+$('#fpsSel').addEventListener('change', e => control({ action: 'fps', fps: Number(e.target.value) }));
+$('#zoomRange').addEventListener('input', e => { $('#zoomVal').textContent = Number(e.target.value).toFixed(1) + '×'; control({ action: 'zoom', value: Number(e.target.value) }); });
+$('#evRange').addEventListener('input', e => { $('#evVal').textContent = Number(e.target.value).toFixed(1); control({ action: 'exposureComp', value: Number(e.target.value) }); });
+$('#wbRange').addEventListener('input', e => { $('#wbVal').textContent = e.target.value + 'K'; if (!$('#wbAuto').checked) control({ action: 'wbTemp', value: Number(e.target.value) }); });
+$('#wbAuto').addEventListener('change', e => control(e.target.checked ? { action: 'wbAuto' } : { action: 'wbTemp', value: Number($('#wbRange').value) }));
+$('#focusSel').addEventListener('change', e => control({ action: 'focusMode', mode: e.target.value }));
+$('#fdRange').addEventListener('input', e => { $('#fdVal').textContent = Number(e.target.value).toFixed(2) + 'm'; $('#focusSel').value = 'manual'; control({ action: 'focusDistance', value: Number(e.target.value) }); });
+$('#isoRange').addEventListener('input', e => { $('#isoVal').textContent = e.target.value; if (!$('#expAuto').checked) control({ action: 'iso', value: Number(e.target.value) }); });
+$('#expAuto').addEventListener('change', e => control(e.target.checked ? { action: 'exposureAuto' } : { action: 'iso', value: Number($('#isoRange').value) }));
+$('#torchSw').addEventListener('change', e => control({ action: 'torch', on: e.target.checked }));
+$('#micSw').addEventListener('change', e => control({ action: 'mic', on: e.target.checked }));
+$('#mirrorSw').addEventListener('change', e => control({ action: 'mirror', on: e.target.checked }));
+$('#dimSw').addEventListener('change', e => control({ action: 'dim', on: e.target.checked }));
+
+let bgMode = 'off', bgPreset = 'office';
+function applyBgUI() {
+  document.querySelectorAll('#bgModeGrid [data-bgmode]').forEach(b => b.classList.toggle('active', b.dataset.bgmode === bgMode));
+  document.querySelectorAll('#bgPresetGrid [data-bgpreset]').forEach(b => b.classList.toggle('active', b.dataset.bgpreset === bgPreset));
+  $('#bgBlurOpts').style.display = bgMode === 'blur' ? 'block' : 'none';
+  $('#bgImgOpts').style.display = bgMode === 'image' ? 'block' : 'none';
+}
+$('#bgModeGrid').addEventListener('click', e => {
+  const b = e.target.closest('[data-bgmode]'); if (!b) return;
+  bgMode = b.dataset.bgmode; applyBgUI();
+  control({ action: 'bgmode', mode: bgMode, strength: Number($('#bgRange').value), preset: bgPreset });
+});
+$('#bgPresetGrid').addEventListener('click', e => {
+  const b = e.target.closest('[data-bgpreset]'); if (!b) return;
+  bgPreset = b.dataset.bgpreset; bgMode = 'image'; applyBgUI();
+  control({ action: 'bgmode', mode: 'image', preset: bgPreset });
+});
+$('#bgRange').addEventListener('input', e => { $('#bgVal').textContent = e.target.value + 'px'; if (bgMode === 'blur') control({ action: 'bgmode', mode: 'blur', strength: Number(e.target.value) }); });
+$('#bgUpload').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return;
+  const url = URL.createObjectURL(file); const img = new Image();
+  img.onload = () => {
+    const scale = Math.min(1, 1280 / (img.naturalWidth || 1280));
+    const c = document.createElement('canvas');
+    c.width = Math.max(2, Math.round(img.naturalWidth * scale)); c.height = Math.max(2, Math.round(img.naturalHeight * scale));
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url);
+    bgMode = 'image'; applyBgUI();
+    control({ action: 'bgmode', mode: 'image', imageData: c.toDataURL('image/jpeg', 0.82) });
+  };
+  img.src = url;
+});
+$('#afSw').addEventListener('change', e => control({ action: 'autoframe', on: e.target.checked }));
+$('#beautyRange').addEventListener('input', e => { $('#beautyVal').textContent = e.target.value + '%'; control({ action: 'beauty', value: Number(e.target.value) }); });
+$('#llSw').addEventListener('change', e => control({ action: 'lowlight', on: e.target.checked }));
+
+/* PTZ pad */
+const ptz = { x: .5, y: .5, scale: 1 };
+function drawPtz() {
+  const pad = $('#ptzPad'), f = $('#ptzFrame');
+  const w = 100 / ptz.scale, h = 100 / ptz.scale;
+  f.style.width = w + '%'; f.style.height = h + '%';
+  f.style.left = Math.min(Math.max(ptz.x * 100 - w / 2, 0), 100 - w) + '%';
+  f.style.top = Math.min(Math.max(ptz.y * 100 - h / 2, 0), 100 - h) + '%';
+  $('#ptzVal').textContent = ptz.scale.toFixed(1) + '×';
+}
+function sendPtz() { control({ action: 'ptz', ptz: { ...ptz } }); drawPtz(); }
+$('#ptzPad').addEventListener('pointerdown', e => {
+  const r = e.currentTarget.getBoundingClientRect();
+  const move = ev => { ptz.x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)); ptz.y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height)); sendPtz(); };
+  move(e);
+  const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
+  addEventListener('pointermove', move); addEventListener('pointerup', up);
+});
+$('#ptzRange').addEventListener('input', e => { ptz.scale = Number(e.target.value); sendPtz(); });
+$('#ptzReset').addEventListener('click', () => { Object.assign(ptz, { x: .5, y: .5, scale: 1 }); $('#ptzRange').value = 1; sendPtz(); });
+drawPtz();
+
+/* ----------------------------------------------------------- teleprompter */
+const sendPrompt = data => { if (window.__premiumGate && !window.__premiumGate({ action: 'teleprompter' })) return; relayRole('camera', 'teleprompter', data); };
+let promptPlaying = false;
+$('#promptSend').addEventListener('click', () => sendPrompt({ text: $('#promptText').value, speed: Number($('#promptSpeed').value), size: Number($('#promptSize').value), reset: true }));
+$('#promptPlay').addEventListener('click', e => { promptPlaying = !promptPlaying; e.target.textContent = promptPlaying ? '⏸ Pause' : '▶ Play'; sendPrompt({ playing: promptPlaying }); });
+$('#promptRestart').addEventListener('click', () => sendPrompt({ reset: true }));
+$('#promptClear').addEventListener('click', () => { $('#promptText').value = ''; sendPrompt({ text: '', playing: false }); promptPlaying = false; $('#promptPlay').textContent = '▶ Play'; });
+$('#promptSpeed').addEventListener('input', e => { $('#psVal').textContent = e.target.value; sendPrompt({ speed: Number(e.target.value) }); });
+$('#promptSize').addEventListener('input', e => { $('#pszVal').textContent = e.target.value + 'px'; sendPrompt({ size: Number(e.target.value) }); });
+
+/* ---------------------------------------------------- audio (WebAudio) */
+let actx = null, analyser = null, gainNode = null, srcNode = null, soundOn = false;
+function attachAudio(stream) {
+  if (!actx) return;
+  try {
+    srcNode?.disconnect();
+    if (!stream || !stream.getAudioTracks().length) { srcNode = null; return; }
+    srcNode = actx.createMediaStreamSource(stream);
+    srcNode.connect(analyser);
+  } catch {}
+}
+$('#soundBtn').addEventListener('click', () => {
+  if (!actx) {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = actx.createAnalyser(); analyser.fftSize = 256;
+    gainNode = actx.createGain();
+    analyser.connect(gainNode); gainNode.connect(actx.destination);
+    attachAudio(cams.get(programId)?.stream);
+    meterLoop();
+  }
+  actx.resume();
+  soundOn = !soundOn;
+  gainNode.gain.value = soundOn ? 1 : 0;
+  $('#soundBtn').textContent = soundOn ? '🔊 Sound on' : '🔇 Sound off';
+});
+function meterLoop() {
+  requestAnimationFrame(meterLoop);
+  if (!analyser) return;
+  const buf = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteTimeDomainData(buf);
+  let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128) / 128);
+  $('#meterFill').style.width = Math.min(100, peak * 140) + '%';
+}
+
+/* ------------------------------------------------ snapshot / record / fs */
+$('#snapBtn').addEventListener('click', () => {
+  const v = $('#programVideo'); if (!v.videoWidth) return;
+  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  c.toBlob(b => downloadBlob(b, `airstudio-${Date.now()}.png`), 'image/png');
+});
+let recorder = null, recChunks = [], recT0 = 0, recTimer = null;
+$('#recBtn').addEventListener('click', () => {
+  if (recorder) { recorder.stop(); return; }
+  const stream = cams.get(programId)?.stream; if (!stream) return;
+  recChunks = [];
+  recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm', videoBitsPerSecond: 10_000_000 });
+  recorder.ondataavailable = e => e.data.size && recChunks.push(e.data);
+  recorder.onstop = () => {
+    downloadBlob(new Blob(recChunks, { type: 'video/webm' }), `airstudio-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`);
+    recorder = null; $('#recBtn').textContent = '⏺ Record program'; $('#recDot').style.display = 'none'; $('#recTime').textContent = '';
+    clearInterval(recTimer);
+  };
+  recorder.start(1000);
+  recT0 = Date.now(); $('#recBtn').textContent = '⏹ Stop & save'; $('#recDot').style.display = 'block';
+  recTimer = setInterval(() => { const s = Math.floor((Date.now() - recT0) / 1000); $('#recTime').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; }, 500);
+});
+function downloadBlob(blob, name) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+$('#fsBtn').addEventListener('click', () => {
+  const m = $('#monitor');
+  document.fullscreenElement ? document.exitFullscreen() : m.requestFullscreen?.();
+});
+
+/* ------------------------------------------------------------- telemetry */
+async function pollStats() {
+  for (const c of cams.values()) {
+    if (!c.pc || c.pc.connectionState !== 'connected') continue;
+    try {
+      const stats = await c.pc.getStats();
+      stats.forEach(r => {
+        if (r.type === 'inbound-rtp' && r.kind === 'video') {
+          const now = r.timestamp;
+          if (c.lastT) { const dt = (now - c.lastT) / 1000; if (dt > 0) c.kbps = Math.round(((r.bytesReceived - c.lastBytes) * 8) / dt / 1000); }
+          c.lastBytes = r.bytesReceived; c.lastT = now;
+          if (r.framesPerSecond) c.fps = Math.round(r.framesPerSecond);
+          c.jitter = r.jitter; c.lost = r.packetsLost;
+          c.history.push(c.kbps); if (c.history.length > 90) c.history.shift();
+        }
+        if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated) c.rtt = r.currentRoundTripTime;
+      });
+      renderCard(c);
+      if (c.id === programId) updatePgmStats();
+      if (c.id === controlId) drawSpark(c);
+    } catch {}
+  }
+}
+function drawSpark(c) {
+  $('#stBitrate').textContent = c.kbps ? (c.kbps / 1000).toFixed(2) + ' Mb/s' : '–';
+  const s = c.state?.settings || {};
+  $('#stRes').textContent = s.width ? `${s.width}×${s.height} @ ${c.fps || '–'} fps` : '–';
+  $('#stRtt').textContent = c.rtt != null ? Math.round(c.rtt * 1000) + ' ms' : '–';
+  $('#stJitter').textContent = c.jitter != null ? Math.round(c.jitter * 1000) + ' ms / ' + (c.lost ?? 0) : '–';
+  const cv = $('#spark'), ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const max = Math.max(2000, ...c.history) * 1.15;
+  const grad = ctx.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, '#8ab4ff'); grad.addColorStop(.55, '#2f9bff'); grad.addColorStop(1, '#ffc93c');
+  ctx.beginPath();
+  c.history.forEach((v, i) => { const x = (i / 89) * W, y = H - (v / max) * (H - 8) - 3; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  ctx.strokeStyle = grad; ctx.lineWidth = 2.4; ctx.stroke();
+  ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
+  ctx.fillStyle = 'rgba(47,155,255,.13)'; ctx.fill();
+}
+setInterval(pollStats, 1000);
+connectWS();
+refreshControlPanel();
+</script>
+
+<!-- ====================================================================
+     PREMIUM MODULE — licensing, feature gating, upgrade flow
+===================================================================== -->
+<style>
+  #tierBadge { font-weight: 800; letter-spacing: .04em; }
+  #tierBadge.free { background: #17203c; border: 1px solid #35509c; color: #b9c4ff; }
+  #tierBadge.premium { background: linear-gradient(92deg, #b8860b, #ffd75e 55%, #b8860b); border: none; color: #241a00; box-shadow: 0 6px 22px rgba(255,200,60,.35); }
+  .lock-overlay {
+    position: absolute; inset: 0; z-index: 6; border-radius: var(--radius);
+    background: rgba(7,10,20,.66); backdrop-filter: blur(2.5px);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    text-align: center; padding: 18px; cursor: pointer;
+  }
+  .lock-overlay .lk-ic { font-size: 26px; }
+  .lock-overlay .lk-t { font-weight: 800; font-size: 14px; }
+  .lock-overlay .lk-s { font-size: 12px; color: var(--muted); line-height: 1.5; max-width: 260px; }
+  #freeWatermark {
+    position: absolute; right: 12px; bottom: 10px; z-index: 4; pointer-events: none;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .08em; color: rgba(255,255,255,.55);
+    background: rgba(0,0,0,.35); padding: 3px 8px; border-radius: 6px;
+  }
+  body.is-free .camstrip .camcard:nth-child(n+2) .thumb::after {
+    content: "⭐ PREMIUM CAMERA SLOT"; position: absolute; inset: 0; z-index: 3;
+    background: rgba(7,10,20,.62); backdrop-filter: blur(2px);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 800; letter-spacing: .1em; color: #ffd75e;
+  }
+  .pro-star { color: #ffd75e; font-size: 11px; margin-left: 5px; }
+  #upgradeModal { position: fixed; inset: 0; z-index: 100; display: none; align-items: center; justify-content: center; padding: 18px; background: rgba(3,5,12,.78); backdrop-filter: blur(6px); }
+  #upgradeModal.open { display: flex; }
+  .modal-card { width: 100%; max-width: 760px; max-height: 92dvh; overflow-y: auto; padding: 28px; position: relative; }
+  .modal-card h2 { font-size: 26px; letter-spacing: -.02em; }
+  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 20px 0; }
+  .plan { padding: 18px; border-radius: 12px; border: 1px solid var(--line); background: #0a0f22; cursor: pointer; position: relative; transition: border-color .15s; }
+  .plan.sel { border-color: #ffd75e; box-shadow: 0 0 0 1px #ffd75e; }
+  .plan .pname { font-size: 12px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+  .plan .price { font-size: 28px; font-weight: 850; margin: 6px 0 2px; }
+  .plan .per { font-size: 12px; color: var(--muted); }
+  .plan .tag { position: absolute; top: -9px; right: 12px; font-size: 10px; font-weight: 800; background: linear-gradient(92deg, #b8860b, #ffd75e); color: #241a00; padding: 2px 8px; border-radius: 99px; }
+  .cmpfree { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 6px 0 18px; }
+  @media (max-width: 620px) { .cmpfree { grid-template-columns: 1fr; } }
+  .cmpfree ul { list-style: none; font-size: 13px; line-height: 2; color: var(--muted); }
+  .cmpfree .col-t { font-weight: 800; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 6px; }
+  .keyrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  .keyrow .input { flex: 1; min-width: 220px; font-family: var(--mono); text-transform: uppercase; letter-spacing: .12em; }
+  #licMsg { font-size: 13px; min-height: 20px; margin-top: 8px; }
+  #ptoast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 120; background: rgba(8,11,22,.92); border: 1px solid #ffd75e; color: var(--text); padding: 11px 18px; border-radius: 11px; font-size: 13.5px; font-weight: 600; opacity: 0; transition: opacity .25s; pointer-events: none; max-width: 90vw; text-align: center; }
+  #ptoast.show { opacity: 1; }
+</style>
+
+<div id="upgradeModal" role="dialog" aria-modal="true">
+  <div class="modal-card panel">
+    <button class="btn small" id="umClose" style="position:absolute;top:14px;right:14px">✕</button>
+    <div style="font-size:30px">⭐</div>
+    <h2>AirStudio <span class="grad-text">Premium</span></h2>
+    <p class="note" style="font-size:13.5px;margin-top:6px" id="umReason">Unlock the full studio — every lens, every AI tool, every camera slot.</p>
+
+    <div class="plans" id="planGrid">
+      <div class="plan" data-plan="monthly"><div class="pname">Monthly</div><div class="price">$4.99</div><div class="per">per month · cancel anytime</div></div>
+      <div class="plan sel" data-plan="yearly"><span class="tag">BEST VALUE</span><div class="pname">Yearly</div><div class="price">$29.99</div><div class="per">per year · $2.50/mo</div></div>
+      <div class="plan" data-plan="lifetime"><div class="pname">Lifetime</div><div class="price">$59.99</div><div class="per">one-time · yours forever</div></div>
+    </div>
+    <button class="btn primary" id="checkoutBtn" style="width:100%;justify-content:center;padding:14px">Checkout (demo) → get my license key</button>
+    <p class="note" style="margin-top:8px;text-align:center">Demo checkout issues a real license key instantly. At launch this button becomes Stripe/Paddle checkout and the key arrives by email.</p>
+
+    <div class="cmpfree" style="margin-top:20px">
+      <div><div class="col-t" style="color:var(--muted)">Free</div>
+        <ul><li>✓ 1 phone camera</li><li>✓ Up to 720p · 30 fps</li><li>✓ Lens switching + zoom + torch</li><li>✓ Exposure compensation</li><li>✓ Battery-saver dim</li><li>✕ AI blur / beauty / low-light</li><li>✕ Multi-cam switcher</li></ul></div>
+      <div><div class="col-t" style="color:#ffd75e">⭐ Premium</div>
+        <ul><li>✓ <b style="color:var(--text)">Up to 4 phones</b> — full switcher</li><li>✓ <b style="color:var(--text)">4K · 60 fps</b></li><li>✓ <b style="color:var(--text)">AI background blur, beauty, low-light</b></li><li>✓ Pro manual: ISO · WB Kelvin · focus</li><li>✓ Digital PTZ punch-in</li><li>✓ Synced teleprompter</li><li>✓ Program recording · no watermark</li></ul></div>
+    </div>
+
+    <label class="field">Already have a license key?</label>
+    <div class="keyrow">
+      <input class="input" id="licKey" placeholder="AIRS-XXXX-XXXX-XXXX" maxlength="19" autocomplete="off">
+      <button class="btn primary" id="licActivate">Activate</button>
+      <button class="btn" id="licDemo">Use demo key</button>
+    </div>
+    <div id="licMsg"></div>
+  </div>
+</div>
+<div id="ptoast"></div>
+
+<script>
+'use strict';
+/* AirStudio Premium — licensing + gating (Free vs Premium) */
+(function () {
+  const LS = 'airstudio_license_v1';
+  const premium = { active: false, key: null, plan: null };
+
+  const ptoast = msg => {
+    const t = document.getElementById('ptoast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 3400);
+  };
+
+  /* ---- header badge ---- */
+  const badge = document.createElement('button');
+  badge.id = 'tierBadge'; badge.className = 'btn small free'; badge.textContent = 'FREE PLAN — Upgrade ⭐';
+  document.getElementById('wsChip')?.after(badge);
+  badge.addEventListener('click', openUpgrade);
+
+  /* ---- watermark (free) ---- */
+  const wm = document.createElement('div');
+  wm.id = 'freeWatermark'; wm.textContent = '◆ AIRSTUDIO FREE';
+  document.getElementById('monitor')?.appendChild(wm);
+
+  /* ---- feature gate (called by control() + sendPrompt()) ---- */
+  const BLOCK = {
+    bgblur: d => d.on, lowlight: d => d.on, beauty: d => d.value > 0,
+    ptz: () => true, iso: () => true, wbTemp: () => true, focusDistance: () => true,
+    focusMode: d => d.mode === 'manual',
+    resolution: d => (d.height || 0) > 720, fps: d => (d.fps || 0) > 30,
+    teleprompter: () => true,
+    bgmode: d => !!d.mode && d.mode !== 'off', autoframe: d => !!d.on,
+  };
+  const LABEL = {
+    bgblur: 'AI background blur', beauty: 'AI beauty filters', lowlight: 'Low-light AI',
+    ptz: 'Digital PTZ', iso: 'Manual ISO', wbTemp: 'Manual white balance', focusDistance: 'Manual focus',
+    focusMode: 'Manual focus', resolution: '1080p / 4K streaming', fps: '60 fps streaming', teleprompter: 'The teleprompter',
+    bgmode: 'AI backgrounds (blur & virtual)', autoframe: 'AI Auto-Framing',
+  };
+  window.__premiumGate = function (data) {
+    if (premium.active) return true;
+    const rule = BLOCK[data && data.action];
+    if (rule && rule(data)) { openUpgrade(LABEL[data.action] || 'This feature'); return false; }
+    return true;
+  };
+
+  /* Free tier: force 720p30 when a camera becomes the control target */
+  window.__onCamSelected = function () {
+    if (premium.active) return;
+    const rs = document.getElementById('resSel'), fs = document.getElementById('fpsSel');
+    if (rs && rs.value !== '1280x720') { rs.value = '1280x720'; rs.dispatchEvent(new Event('change')); }
+    if (fs && fs.value !== '30') { fs.value = '30'; fs.dispatchEvent(new Event('change')); }
+  };
+
+  /* Multi-cam + recording gates (capture phase, before app handlers) */
+  document.addEventListener('click', e => {
+    if (premium.active) return;
+    if (e.target.id === 'recBtn') { e.stopPropagation(); e.preventDefault(); openUpgrade('Program recording'); return; }
+    const cut = e.target.closest && e.target.closest('.camcard .cut');
+    if (cut) {
+      const cards = [...document.querySelectorAll('.camstrip .camcard')];
+      if (cards.indexOf(e.target.closest('.camcard')) > 0) {
+        e.stopPropagation(); e.preventDefault(); openUpgrade('Multi-cam switching (up to 4 phones)');
+      }
+    }
+  }, true);
+
+  /* ---- visual locking ---- */
+  function findPanel(needle) {
+    return [...document.querySelectorAll('.sidecol .panel')].find(p => p.textContent.includes(needle));
+  }
+  function setLock(panel, title, sub, locked) {
+    if (!panel) return;
+    panel.style.position = 'relative';
+    let ov = panel.querySelector(':scope > .lock-overlay');
+    if (locked && !ov) {
+      ov = document.createElement('div');
+      ov.className = 'lock-overlay';
+      ov.innerHTML = `<div class="lk-ic">🔒</div><div class="lk-t">${title}</div><div class="lk-s">${sub}</div><button class="btn small primary">Unlock with Premium ⭐</button>`;
+      ov.addEventListener('click', () => openUpgrade(title));
+      panel.appendChild(ov);
+    } else if (!locked && ov) ov.remove();
+  }
+  function markStars() {
+    document.querySelectorAll('.ctl-row .lab').forEach(l => {
+      if (/ISO|White balance|Manual focus/.test(l.textContent) && !l.querySelector('.pro-star')) {
+        const s = document.createElement('span'); s.className = 'pro-star'; s.textContent = '⭐ PRO'; l.appendChild(s);
+      }
+    });
+  }
+
+  function applyTier() {
+    document.body.classList.toggle('is-free', !premium.active);
+    document.body.classList.toggle('is-premium', premium.active);
+    badge.className = 'btn small ' + (premium.active ? 'premium' : 'free');
+    badge.textContent = premium.active ? `⭐ PREMIUM${premium.plan ? ' · ' + premium.plan.toUpperCase() : ''}` : 'FREE PLAN — Upgrade ⭐';
+    wm.style.display = premium.active ? 'none' : 'block';
+
+    // Resolution / fps option gating
+    const rs = document.getElementById('resSel'), fs = document.getElementById('fpsSel');
+    if (rs) [...rs.options].forEach(o => {
+      const h = Number(o.value.split('x')[1] || 0);
+      const lock = !premium.active && h > 720;
+      o.disabled = lock;
+      o.textContent = o.textContent.replace(/ ?⭐$/, '') + (lock ? ' ⭐' : '');
+    });
+    if (fs) [...fs.options].forEach(o => {
+      const lock = !premium.active && Number(o.value) > 30;
+      o.disabled = lock;
+      o.textContent = o.textContent.replace(/ ?⭐$/, '') + (lock ? ' ⭐' : '');
+    });
+    if (!premium.active) { if (rs) rs.value = '1280x720'; if (fs) fs.value = '30'; }
+
+    setLock(findPanel('AI & look'), '🤖 AI & Look is Premium', 'On-phone background blur, beauty smoothing, low-light AI and digital PTZ.', !premium.active);
+    setLock(findPanel('Teleprompter'), '📜 Teleprompter is Premium', 'Scripts that scroll on the phone, synced and speed-controlled from here.', !premium.active);
+    markStars();
+  }
+
+  /* ---- upgrade modal ---- */
+  const modal = document.getElementById('upgradeModal');
+  let selectedPlan = 'yearly';
+  function openUpgrade(feature) {
+    if (premium.active) { ptoast('⭐ Premium is active — everything is unlocked. Enjoy!'); return; }
+    if (feature) document.getElementById('umReason').innerHTML =
+      `<b style="color:var(--text)">${feature}</b> is a Premium feature. Unlock it — and the entire studio — below.`;
+    modal.classList.add('open');
+  }
+  window.__openUpgrade = openUpgrade;
+  document.getElementById('umClose').addEventListener('click', () => modal.classList.remove('open'));
+  modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('open'); });
+  document.getElementById('planGrid').addEventListener('click', e => {
+    const p = e.target.closest('.plan'); if (!p) return;
+    selectedPlan = p.dataset.plan;
+    document.querySelectorAll('#planGrid .plan').forEach(x => x.classList.toggle('sel', x === p));
+  });
+
+  async function activate(key, planHint) {
+    const msg = document.getElementById('licMsg');
+    msg.style.color = 'var(--muted)'; msg.textContent = 'Verifying key…';
+    try {
+      const r = await fetch('/api/license/activate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
+      const j = await r.json();
+      if (j.ok) {
+        premium.active = true; premium.key = key.trim().toUpperCase(); premium.plan = planHint || 'premium';
+        localStorage.setItem(LS, JSON.stringify({ key: premium.key, plan: premium.plan, at: Date.now() }));
+        applyTier();
+        msg.style.color = 'var(--green)'; msg.textContent = '⭐ ' + j.message;
+        ptoast('⭐ Premium activated — 4K60, AI suite, multi-cam and teleprompter unlocked!');
+        setTimeout(() => modal.classList.remove('open'), 1200);
+        return true;
+      }
+      msg.style.color = 'var(--red)'; msg.textContent = '✕ ' + j.message;
+      return false;
+    } catch {
+      msg.style.color = 'var(--red)'; msg.textContent = '✕ Could not reach the license server.';
+      return false;
+    }
+  }
+
+  document.getElementById('licActivate').addEventListener('click', () => {
+    const k = document.getElementById('licKey').value;
+    if (k.trim().length < 10) { document.getElementById('licMsg').style.color = 'var(--red)'; document.getElementById('licMsg').textContent = 'Paste a key in the format AIRS-XXXX-XXXX-XXXX.'; return; }
+    activate(k);
+  });
+  document.getElementById('licDemo').addEventListener('click', async () => {
+    try {
+      const j = await (await fetch('/api/license/demo')).json();
+      document.getElementById('licKey').value = j.key;
+      activate(j.key, 'demo');
+    } catch { ptoast('Demo keys are disabled on this server.'); }
+  });
+  /* Stripe mode when the server has keys configured; otherwise demo checkout */
+  let stripeEnabled = false;
+  fetch('/api/config/public').then(r => r.json()).then(cfg => {
+    stripeEnabled = !!cfg.stripeEnabled;
+    if (stripeEnabled) {
+      const b = document.getElementById('checkoutBtn');
+      b.textContent = 'Checkout with Stripe →';
+      if (b.nextElementSibling) b.nextElementSibling.textContent = 'Secure payment via Stripe. Your license key activates automatically when you return to this page.';
+    }
+  }).catch(() => {});
+
+  document.getElementById('checkoutBtn').addEventListener('click', async () => {
+    const msg = document.getElementById('licMsg');
+    if (stripeEnabled) {
+      msg.style.color = 'var(--muted)'; msg.textContent = 'Redirecting to Stripe Checkout…';
+      try {
+        const j = await (await fetch('/api/checkout/stripe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: selectedPlan }) })).json();
+        if (j.ok && j.url) { location.href = j.url; return; }
+        throw new Error(j.message || j.error || 'checkout failed');
+      } catch (e) {
+        msg.style.color = 'var(--red)'; msg.textContent = 'Stripe checkout failed: ' + e.message;
+      }
+      return;
+    }
+    msg.style.color = 'var(--muted)'; msg.textContent = 'Processing demo checkout…';
+    try {
+      const j = await (await fetch('/api/license/checkout-demo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: selectedPlan }) })).json();
+      if (!j.key) throw new Error('no key');
+      document.getElementById('licKey').value = j.key;
+      msg.style.color = 'var(--text)';
+      msg.innerHTML = `🎉 Your license key: <b style="font-family:var(--mono)">${j.key}</b> — activating…`;
+      await activate(j.key, selectedPlan);
+    } catch { msg.style.color = 'var(--red)'; msg.textContent = 'Demo checkout unavailable (disabled in production — use a purchased key).'; }
+  });
+
+  /* ---- restore saved license ---- */
+  (async function init() {
+    applyTier();
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS) || 'null');
+      if (saved && saved.key) {
+        const r = await fetch('/api/license/activate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: saved.key }) });
+        const j = await r.json();
+        if (j.ok) { premium.active = true; premium.key = saved.key; premium.plan = saved.plan || 'premium'; applyTier(); }
+        else localStorage.removeItem(LS);
+      }
+    } catch {}
+
+    /* Returning from Stripe Checkout? Retrieve the issued key and activate. */
+    try {
+      const q = new URLSearchParams(location.search);
+      if (q.get('checkout') === 'success' && q.get('session_id') && !premium.active) {
+        ptoast('💳 Payment received — fetching your license key…');
+        for (let i = 0; i < 12 && !premium.active; i++) {
+          try {
+            const j = await (await fetch('/api/license/by-session?session=' + encodeURIComponent(q.get('session_id')))).json();
+            if (j.ok && j.key) { document.getElementById('licKey').value = j.key; await activate(j.key, j.plan); break; }
+          } catch {}
+          await new Promise(r => setTimeout(r, 1500));
+        }
+        if (!premium.active) ptoast('Payment is still confirming — keep this tab open, or enter the key from your email in the Upgrade dialog.');
+      } else if (q.get('checkout') === 'cancel') {
+        ptoast('Checkout cancelled — you are still on the Free plan.');
+      }
+      if (q.get('checkout')) {
+        q.delete('checkout'); q.delete('session_id');
+        history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : ''));
+      }
+    } catch {}
+  })();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AirStudio — Elevate Your Vision — Your Phone Is a 4K Studio Camera</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#070a14">
+<link rel="stylesheet" href="/style.css">
+<style>
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 22px; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; }
+  .logo { display: flex; align-items: center; gap: 11px; font-weight: 800; font-size: 20px; letter-spacing: -.02em; }
+  .hero { text-align: center; padding: 64px 0 40px; }
+  .hero h1 { font-size: clamp(38px, 6vw, 64px); line-height: 1.05; letter-spacing: -.03em; font-weight: 850; }
+  .hero p { color: var(--muted); font-size: clamp(15px, 2vw, 19px); max-width: 680px; margin: 20px auto 30px; line-height: 1.6; }
+  .hero-cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .hero-cta .btn { padding: 15px 26px; font-size: 15.5px; border-radius: 13px; }
+  .hero-note { margin-top: 16px; font-size: 12.5px; color: var(--muted); }
+  .stats { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 42px 0 8px; }
+  .stat { padding: 16px 22px; text-align: center; min-width: 150px; }
+  .stat b { font-size: 24px; display: block; letter-spacing: -.02em; }
+  .stat span { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+  section { padding: 46px 0 8px; }
+  h2 { font-size: clamp(24px, 3.4vw, 34px); letter-spacing: -.02em; text-align: center; }
+  .sub2 { text-align: center; color: var(--muted); margin: 10px auto 30px; max-width: 620px; line-height: 1.6; font-size: 15px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 14px; }
+  .feat { padding: 22px; }
+  .feat .ic { font-size: 24px; margin-bottom: 12px; }
+  .feat h3 { font-size: 15.5px; margin-bottom: 7px; letter-spacing: -.01em; }
+  .feat p { font-size: 13.5px; color: var(--muted); line-height: 1.55; }
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .step { padding: 22px; }
+  .step .n { font-family: var(--mono); color: var(--accent2); font-size: 13px; font-weight: 700; }
+  .step h3 { margin: 8px 0 6px; font-size: 15.5px; }
+  .step p { font-size: 13.5px; color: var(--muted); line-height: 1.55; }
+  table.cmp { width: 100%; border-collapse: collapse; font-size: 13.5px; overflow: hidden; }
+  table.cmp th, table.cmp td { padding: 11px 13px; border-bottom: 1px solid #16203d; text-align: left; }
+  table.cmp th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  table.cmp td.y { color: var(--green); font-weight: 700; }
+  table.cmp td.n { color: #5b688c; }
+  table.cmp td.p { color: var(--amber); }
+  .cmp-wrap { overflow-x: auto; padding: 6px 8px; }
+  footer { padding: 52px 0 34px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.7; }
+  .badge-new { font-size: 10px; background: linear-gradient(92deg, var(--accent), var(--accent3)); color: #fff; padding: 2px 7px; border-radius: 999px; font-weight: 800; vertical-align: 2px; margin-left: 6px; letter-spacing: .05em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">
+      <img src="/icons/icon-192.png" alt="AirStudio logo" style="width:30px;height:30px;border-radius:50%">
+      Air<span class="grad-text">Studio</span>
+    </div>
+    <nav style="display:flex;gap:10px">
+      <a class="btn small" href="/camera">Phone Camera</a>
+      <a class="btn small primary" href="/studio">Open Studio</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <img src="/logo-full.png" alt="AirStudio Premium — Elevate Your Vision" style="width:min(440px,90vw);border-radius:18px;border:1px solid var(--line);margin-bottom:24px;box-shadow:0 24px 60px rgba(0,0,0,.55)"><br>
+    <span class="chip on"><span class="dot pulse"></span> No app install &middot; Works in the browser</span>
+    <h1 style="margin-top:20px">Your phone is a<br><span class="grad-text">4K studio camera.</span></h1>
+    <p>AirStudio turns any Android or iPhone into a professional PC webcam — multi-lens switching, on-device AI background blur, full remote studio controls, and up to 4 phones in one switcher. Everything Iriun, DroidCam and Camo should have been.</p>
+    <div class="hero-cta">
+      <a class="btn primary" href="/studio">🖥️&nbsp; Launch Studio on this PC</a>
+      <a class="btn" href="/camera">📱&nbsp; Use this device as a camera</a>
+    </div>
+    <div class="hero-note">Open the Studio here, scan the QR code with your phone, and you're live in under 10 seconds.</div>
+
+    <div class="stats">
+      <div class="stat panel"><b>4K · 60fps</b><span>Max stream</span></div>
+      <div class="stat panel"><b>&lt; 80 ms</b><span>Glass-to-glass*</span></div>
+      <div class="stat panel"><b>4 phones</b><span>Multi-cam switcher</span></div>
+      <div class="stat panel"><b>0%</b><span>Desktop CPU for AI</span></div>
+    </div>
+  </div>
+
+  <section>
+    <h2>Built to outclass <span class="grad-text">every rival</span></h2>
+    <p class="sub2">Every limitation in the blueprint becomes a feature here. This release already ships the Phase 1 engine and most of Phase 2 — in the browser, with zero installs.</p>
+    <div class="grid">
+      <div class="feat panel"><div class="ic">🔭</div><h3>Dynamic Multi-Lens Engine</h3><p>Detects every physical camera on the phone — ultra-wide 0.5×, main 1×, telephoto, front — and switches instantly from the desktop. No more "front/back only".</p></div>
+      <div class="feat panel"><div class="ic">⚡</div><h3>WebRTC Low-Latency Core</h3><p>Peer-to-peer encrypted streaming up to 4K @ 60 fps. Direct device-to-device media path bypasses the router bottlenecks and IP-pairing failures of legacy tools.</p></div>
+      <div class="feat panel"><div class="ic">🤖</div><h3>On-Device AI Pipeline<span class="badge-new">AI</span></h3><p>Background blur (portrait bokeh), beauty smoothing and low-light enhancement run on the phone itself — your PC CPU stays 100% free for games and renders.</p></div>
+      <div class="feat panel"><div class="ic">🎛️</div><h3>Full Remote Studio Controls</h3><p>ISO/exposure, white balance, focus, hardware zoom, torch, resolution and frame-rate — all adjustable live from the PC without touching the phone.</p></div>
+      <div class="feat panel"><div class="ic">🎬</div><h3>4-Camera Production Switcher</h3><p>Connect up to four phones to one studio. CUT between angles like a broadcast switcher — built for podcasts, demos and multi-angle streams.</p></div>
+      <div class="feat panel"><div class="ic">📜</div><h3>Synced Teleprompter</h3><p>Type your script on the PC; it scrolls on the phone right under the lens. Speed and playback controlled remotely, live.</p></div>
+      <div class="feat panel"><div class="ic">🔋</div><h3>Thermal &amp; Battery Saver</h3><p>One tap dims the phone to a near-black ambient screen while streaming continues, slashing heat and battery drain. Live battery telemetry in the studio.</p></div>
+      <div class="feat panel"><div class="ic">📡</div><h3>OBS-Ready Clean Output</h3><p>A borderless program feed URL drops straight into OBS as a Browser Source, or full-screen it for Zoom/Teams window sharing. Snapshot &amp; record built in.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Live in <span class="grad-text">three steps</span></h2>
+    <p class="sub2">No drivers, no IP addresses, no app-store detours.</p>
+    <div class="steps">
+      <div class="step panel"><div class="n">STEP 01</div><h3>Open the Studio</h3><p>Launch the Studio on your PC. It generates a 6-character pairing code and a QR code instantly.</p></div>
+      <div class="step panel"><div class="n">STEP 02</div><h3>Scan with your phone</h3><p>Point your phone camera at the QR code. The camera page opens pre-paired — approve camera access and you're connected peer-to-peer.</p></div>
+      <div class="step panel"><div class="n">STEP 03</div><h3>Direct your shot</h3><p>Switch lenses, dial in exposure, blur the background, roll the teleprompter — then send the clean output to OBS, Zoom or Teams.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>AirStudio vs <span class="grad-text">the incumbents</span></h2>
+    <p class="sub2">The honest scorecard, feature by feature.</p>
+    <div class="cmp-wrap panel">
+      <table class="cmp">
+        <tr><th>Capability</th><th>AirStudio</th><th>Iriun</th><th>DroidCam</th><th>Camo</th></tr>
+        <tr><td>Ultra-wide / telephoto lens switching</td><td class="y">✓ All lenses</td><td class="n">✗ Front/back</td><td class="n">✗ Front/back</td><td class="p">Partial</td></tr>
+        <tr><td>60 fps streaming</td><td class="y">✓</td><td class="n">✗ 30 fps cap</td><td class="p">Pro tier</td><td class="y">✓</td></tr>
+        <tr><td>AI background blur (on-device)</td><td class="y">✓ On phone</td><td class="n">✗</td><td class="n">✗</td><td class="p">Desktop-side</td></tr>
+        <tr><td>Multi-phone switcher (up to 4)</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td></tr>
+        <tr><td>Remote manual controls from PC</td><td class="y">✓ Full</td><td class="p">Basic</td><td class="p">Basic</td><td class="y">✓</td></tr>
+        <tr><td>Synced teleprompter</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td></tr>
+        <tr><td>Battery-saver dim mode + telemetry</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td></tr>
+        <tr><td>Zero-install phone client</td><td class="y">✓ Browser</td><td class="n">App required</td><td class="n">App required</td><td class="n">App required</td></tr>
+        <tr><td>QR pairing (no IP typing)</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td><td class="p">Partial</td></tr>
+        <tr><td>Live bitrate / latency / battery stats</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Simple, honest <span class="grad-text">pricing</span></h2>
+    <p class="sub2">Start free forever. Go Premium when you're ready for the full studio — one license unlocks everything, on this PC.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;max-width:820px;margin:0 auto">
+      <div class="panel" style="padding:26px">
+        <div style="font-size:12px;font-weight:800;letter-spacing:.07em;color:var(--muted)">FREE</div>
+        <div style="font-size:34px;font-weight:850;margin:8px 0 2px">$0</div>
+        <div style="color:var(--muted);font-size:12.5px;margin-bottom:16px">forever · no card needed</div>
+        <ul style="list-style:none;font-size:13.5px;line-height:2.1;color:var(--muted)">
+          <li>✓ 1 phone camera</li>
+          <li>✓ Up to 720p · 30 fps</li>
+          <li>✓ Multi-lens switching</li>
+          <li>✓ Zoom, torch, exposure comp</li>
+          <li>✓ Battery-saver dim mode</li>
+          <li>✓ QR pairing · OBS output</li>
+        </ul>
+        <a class="btn" href="/studio" style="width:100%;justify-content:center;margin-top:16px">Start free</a>
+      </div>
+      <div class="panel" style="padding:26px;border-color:#8a6d1d;box-shadow:0 12px 40px rgba(255,200,60,.12);position:relative">
+        <span style="position:absolute;top:-10px;right:16px;font-size:10.5px;font-weight:800;background:linear-gradient(92deg,#b8860b,#ffd75e);color:#241a00;padding:3px 10px;border-radius:99px">MOST POPULAR</span>
+        <div style="font-size:12px;font-weight:800;letter-spacing:.07em;color:#ffd75e">⭐ PREMIUM</div>
+        <div style="font-size:34px;font-weight:850;margin:8px 0 2px">$29.99<span style="font-size:15px;color:var(--muted)">/yr</span></div>
+        <div style="color:var(--muted);font-size:12.5px;margin-bottom:16px">or $4.99/mo · $59.99 lifetime</div>
+        <ul style="list-style:none;font-size:13.5px;line-height:2.1;color:var(--muted)">
+          <li>✓ <b style="color:var(--text)">4K · 60 fps</b> streaming</li>
+          <li>✓ <b style="color:var(--text)">Up to 4 phones</b> — production switcher</li>
+          <li>✓ <b style="color:var(--text)">AI background blur · beauty · low-light</b></li>
+          <li>✓ Pro manual: ISO · WB Kelvin · manual focus</li>
+          <li>✓ Digital PTZ · synced teleprompter</li>
+          <li>✓ Program recording · no watermark</li>
+        </ul>
+        <a class="btn primary" href="/studio" style="width:100%;justify-content:center;margin-top:16px">Go Premium ⭐</a>
+      </div>
+    </div>
+    <p style="text-align:center;color:var(--muted);font-size:12.5px;margin-top:16px">Premium activates instantly with a license key inside the Studio. Try it now with the built-in demo checkout.</p>
+  </section>
+
+  <footer>
+    AirStudio MVP — Phase 1/2 web engine. Native apps, virtual-camera drivers &amp; OBS plugin on the roadmap.<br>
+    *Latency measured on local network / USB tethering. Media is peer-to-peer and end-to-end encrypted (DTLS-SRTP); the server only introduces devices.
+  </footer>
+</div>
+</body>
+</html>

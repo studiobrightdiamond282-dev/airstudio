@@ -1,0 +1,16 @@
+{
+  "name": "AirStudio — Elevate Your Vision",
+  "short_name": "AirStudio",
+  "description": "Turn your phone into a 4K studio webcam. Multi-lens, on-device AI, 4-phone switcher.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#070a14",
+  "theme_color": "#070a14",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

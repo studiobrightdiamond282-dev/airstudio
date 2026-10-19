@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>AirStudio — Phone Camera</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#070a14">
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { overflow: hidden; }
+  #joinScreen { min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .join-card { width: 100%; max-width: 400px; padding: 28px 24px; }
+  .join-card h1 { font-size: 24px; letter-spacing: -.02em; margin-bottom: 6px; }
+  .join-card p { color: var(--muted); font-size: 13.5px; line-height: 1.55; margin-bottom: 20px; }
+  .join-card .input { margin-bottom: 14px; font-size: 16px; }
+  #codeInput { text-transform: uppercase; letter-spacing: .35em; font-family: var(--mono); font-weight: 700; text-align: center; font-size: 22px; }
+  #joinError { color: var(--red); font-size: 13px; min-height: 18px; margin: 8px 0; }
+  .hidden { display: none !important; }
+
+  #camScreen { position: fixed; inset: 0; background: #000; }
+  #previewWrap { position: absolute; inset: 0; }
+  #rawVideo, #fxCanvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .mirrored { transform: scaleX(-1); }
+  .topbar {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 5;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: calc(10px + env(safe-area-inset-top)) 12px 26px;
+    background: linear-gradient(180deg, rgba(0,0,0,.65), transparent);
+  }
+  .botbar {
+    position: absolute; bottom: 0; left: 0; right: 0; z-index: 5;
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    padding: 26px 12px calc(14px + env(safe-area-inset-bottom));
+    background: linear-gradient(0deg, rgba(0,0,0,.65), transparent);
+  }
+  .round-btn {
+    width: 54px; height: 54px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35);
+    background: rgba(10,14,28,.55); color: #fff; font-size: 22px; backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .round-btn.on { background: linear-gradient(135deg, var(--accent), var(--accent3)); border-color: transparent; }
+  .statline { font-family: var(--mono); font-size: 11px; color: #cdd7f5; background: rgba(0,0,0,.45); padding: 4px 8px; border-radius: 7px; }
+
+  #prompter {
+    position: absolute; left: 4%; right: 4%; top: 12%; max-height: 34%; z-index: 4; overflow: hidden;
+    background: rgba(4,6,14,.55); border: 1px solid rgba(255,255,255,.18); border-radius: 12px; backdrop-filter: blur(3px);
+    -webkit-mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
+            mask-image: linear-gradient(180deg, transparent, #000 18%, #000 82%, transparent);
+  }
+  #prompterText { padding: 40% 16px; font-size: 21px; line-height: 1.55; font-weight: 600; color: #fff; text-align: center; white-space: pre-wrap; will-change: transform; }
+
+  #dimOverlay {
+    position: absolute; inset: 0; z-index: 9; background: #010204; color: #2c3a5f;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 20px;
+  }
+  #dimOverlay .big { font-size: 15px; font-weight: 700; color: #3d4f82; }
+  #dimOverlay .small { font-size: 12px; }
+  #toast {
+    position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 8;
+    background: rgba(8,11,22,.85); border: 1px solid var(--line); color: var(--text);
+    padding: 9px 14px; border-radius: 10px; font-size: 13px; opacity: 0; transition: opacity .25s; pointer-events: none;
+    max-width: 86vw; text-align: center;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- ======================= JOIN ======================= -->
+<div id="joinScreen">
+  <div class="join-card panel">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <img src="/icons/icon-192.png" alt="AirStudio logo" style="width:30px;height:30px;border-radius:50%">
+      <h1>Air<span class="grad-text">Studio</span></h1>
+    </div>
+    <p>Turn this phone into a wireless studio camera. Enter the pairing code shown in the Studio on your PC — the video link is peer-to-peer and encrypted.</p>
+    <label class="field">Camera name</label>
+    <input id="nameInput" class="input" maxlength="30" autocomplete="off">
+    <label class="field">Pairing code</label>
+    <input id="codeInput" class="input" maxlength="6" placeholder="------" autocomplete="off" autocapitalize="characters">
+    <div id="joinError"></div>
+    <button id="joinBtn" class="btn primary" style="width:100%;justify-content:center;padding:14px">📷 Start Camera</button>
+    <p style="margin-top:14px;font-size:12px">Tip: keep this tab in the foreground while streaming. Use the 🌙 battery-saver once you're framed up.</p>
+  </div>
+</div>
+
+<!-- ======================= CAMERA ======================= -->
+<div id="camScreen" class="hidden">
+  <div id="previewWrap">
+    <video id="rawVideo" autoplay playsinline muted></video>
+    <canvas id="fxCanvas" class="hidden"></canvas>
+  </div>
+
+  <div id="prompter" class="hidden"><div id="prompterText"></div></div>
+
+  <div class="topbar">
+    <span class="chip live" id="liveChip"><span class="dot pulse"></span> LIVE</span>
+    <span class="statline" id="statLine">connecting…</span>
+    <span class="statline" id="battLine">🔋 –</span>
+  </div>
+
+  <div class="botbar">
+    <button class="round-btn" id="flipBtn" title="Flip camera">🔄</button>
+    <button class="round-btn" id="torchBtn" title="Torch">🔦</button>
+    <button class="round-btn" id="micBtn" title="Microphone">🎙️</button>
+    <button class="round-btn" id="dimBtn" title="Battery saver">🌙</button>
+    <button class="round-btn" id="leaveBtn" title="Disconnect" style="border-color:#7f1d2d;background:rgba(60,10,20,.6)">✕</button>
+  </div>
+
+  <div id="toast"></div>
+
+  <div id="dimOverlay" class="hidden">
+    <div class="big">🌙 Battery-saver streaming</div>
+    <div class="small">Screen dimmed to cut heat &amp; drain.<br>Your camera is still live. Tap anywhere to wake.</div>
+    <div class="small" id="dimInfo" style="margin-top:10px;font-family:var(--mono)"></div>
+  </div>
+</div>
+
+<canvas id="personCanvas" class="hidden"></canvas>
+<canvas id="blurCanvas" class="hidden"></canvas>
+
+<script>
+'use strict';
+/* ============================================================================
+   AirStudio — phone camera client
+   Capture → (optional on-device AI/canvas pipeline) → WebRTC to Studio
+============================================================================ */
+const $ = s => document.querySelector(s);
+const ICE = { iceServers: [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+]};
+
+const state = {
+  ws: null, myId: null, room: null, name: null,
+  rawStream: null, videoTrack: null, audioTrack: null,
+  fxStream: null, fxTrack: null, processing: false,
+  pcs: new Map(),               // peerId -> RTCPeerConnection
+  lenses: [], currentDeviceId: null, facing: 'environment',
+  want: { width: 1920, height: 1080, fps: 30 },
+  fx: { beauty: 0, lowlight: false, bgblur: false, bgmode: 'off', bgPreset: 'office', bgstrength: 16, mirror: false, autoframe: false, ptz: { x: .5, y: .5, scale: 1 } },
+  torch: false, micOn: true, dim: false,
+  seg: null, segMask: null, segBusy: false, segFailed: false,
+  face: null, faceBusy: false, faceFailed: false, lastFaceAt: 0, bgImageCanvas: null,
+  battery: null, lastBytes: 0, lastStatT: 0, outKbps: 0, outFps: 0,
+  prompter: { text: '', playing: false, speed: 40, size: 21, offset: 0 },
+  reconnectTimer: null,
+};
+
+const rawVideo = $('#rawVideo'), fxCanvas = $('#fxCanvas'), fxCtx = fxCanvas.getContext('2d');
+const personCanvas = $('#personCanvas'), blurCanvas = $('#blurCanvas');
+
+function toast(msg, ms = 2600) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+/* ------------------------------------------------------------- boot / join */
+const params = new URLSearchParams(location.search);
+$('#codeInput').value = (params.get('code') || '').toUpperCase();
+$('#nameInput').value = defaultName();
+function defaultName() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return 'iPhone Camera';
+  if (/iPad/.test(ua)) return 'iPad Camera';
+  const m = ua.match(/Android[^;]*;\s*([^)]+)\)/);
+  return (m ? m[1].trim() : 'Phone Camera').slice(0, 26);
+}
+
+$('#joinBtn').addEventListener('click', join);
+async function join() {
+  const code = $('#codeInput').value.trim().toUpperCase();
+  const name = $('#nameInput').value.trim() || 'Phone Camera';
+  if (code.length < 4) { $('#joinError').textContent = 'Enter the 6-character pairing code from the Studio.'; return; }
+  $('#joinError').textContent = '';
+  $('#joinBtn').disabled = true; $('#joinBtn').textContent = 'Starting camera…';
+  try {
+    await startCapture({ facingMode: 'environment' });
+  } catch (e) {
+    $('#joinBtn').disabled = false; $('#joinBtn').textContent = '📷 Start Camera';
+    $('#joinError').textContent = 'Camera access failed: ' + (e.message || e.name) + '. Allow camera permission and retry.';
+    return;
+  }
+  state.room = code; state.name = name;
+  $('#joinScreen').classList.add('hidden');
+  $('#camScreen').classList.remove('hidden');
+  requestWakeLock();
+  initBattery();
+  connectWS();
+  startRenderLoop();
+  setInterval(sendState, 2000);
+  setInterval(collectStats, 1000);
+}
+
+/* -------------------------------------------------------------- capture */
+async function startCapture(videoOpts) {
+  const constraints = {
+    video: {
+      width: { ideal: state.want.width }, height: { ideal: state.want.height },
+      frameRate: { ideal: state.want.fps },
+      ...videoOpts,
+    },
+    audio: state.audioTrack ? false : { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  };
+  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  const newVideo = stream.getVideoTracks()[0];
+  if (!state.rawStream) state.rawStream = new MediaStream();
+  if (state.videoTrack) { state.rawStream.removeTrack(state.videoTrack); state.videoTrack.stop(); }
+  state.videoTrack = newVideo;
+  state.rawStream.addTrack(newVideo);
+  if (!state.audioTrack && stream.getAudioTracks()[0]) {
+    state.audioTrack = stream.getAudioTracks()[0];
+    state.rawStream.addTrack(state.audioTrack);
+  }
+  rawVideo.srcObject = state.rawStream;
+  await rawVideo.play().catch(() => {});
+  const s = newVideo.getSettings();
+  state.currentDeviceId = s.deviceId || state.currentDeviceId;
+  state.facing = s.facingMode || state.facing;
+  await refreshLenses();
+  refreshOutbound();
+  updatePreviewChrome();
+  publishCaps();
+  if (state.torch) applyTorch(true);
+}
+
+async function refreshLenses() {
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const vids = devs.filter(d => d.kind === 'videoinput');
+    state.lenses = vids.map((d, i) => ({ deviceId: d.deviceId, label: friendlyLens(d.label, i), raw: d.label || '' }));
+  } catch { /* labels optional */ }
+}
+function friendlyLens(label, i) {
+  if (!label) return 'Lens ' + (i + 1);
+  let l = label
+    .replace(/camera2?\s*\d+,?\s*/i, '')
+    .replace(/facing\s*/i, '')
+    .replace(/\(.*?\)/g, '')
+    .trim();
+  l = l.replace(/^back$/i, 'Back · Main').replace(/^front$/i, 'Front');
+  if (/ultra/i.test(label)) l = 'Back · Ultra-Wide 0.5×';
+  else if (/tele/i.test(label)) l = 'Back · Telephoto';
+  else if (/macro/i.test(label)) l = 'Back · Macro';
+  else if (/wide/i.test(label) && /back/i.test(label)) l = 'Back · Main 1×';
+  else if (/front/i.test(label)) l = 'Front';
+  else if (/back/i.test(label) && !/main/i.test(l)) l = 'Back · ' + (l || 'Lens ' + (i + 1));
+  return l || ('Lens ' + (i + 1));
+}
+
+function trackCaps() {
+  try {
+    const c = state.videoTrack?.getCapabilities?.() || {};
+    const pick = k => c[k] ? { min: c[k].min, max: c[k].max, step: c[k].step } : undefined;
+    return {
+      zoom: pick('zoom'), exposureCompensation: pick('exposureCompensation'),
+      colorTemperature: pick('colorTemperature'), focusDistance: pick('focusDistance'),
+      iso: pick('iso'), torch: !!c.torch,
+      exposureMode: c.exposureMode, whiteBalanceMode: c.whiteBalanceMode, focusMode: c.focusMode,
+      width: pick('width'), height: pick('height'), frameRate: pick('frameRate'),
+    };
+  } catch { return {}; }
+}
+function publishCaps() {
+  if (!state.ws || state.ws.readyState !== 1) return;
+  const s = state.videoTrack?.getSettings?.() || {};
+  state.ws.send(JSON.stringify({
+    type: 'caps',
+    caps: { lenses: state.lenses, currentDeviceId: state.currentDeviceId, settings: { width: s.width, height: s.height, frameRate: s.frameRate, facingMode: s.facingMode }, track: trackCaps() },
+  }));
+}
+
+/* ------------------------------------------- outbound track (raw vs AI) */
+function processingNeeded() {
+  const f = state.fx;
+  return f.beauty > 0 || f.lowlight || f.bgmode !== 'off' || f.mirror || f.autoframe || f.ptz.scale > 1.01;
+}
+function outboundVideoTrack() {
+  if (state.processing && state.fxTrack) return state.fxTrack;
+  return state.videoTrack;
+}
+function refreshOutbound() {
+  const wantFx = processingNeeded() && typeof fxCanvas.captureStream === 'function';
+  if (wantFx && !state.fxStream) {
+    state.fxStream = fxCanvas.captureStream(state.want.fps);
+    state.fxTrack = state.fxStream.getVideoTracks()[0];
+    if (state.fxTrack) state.fxTrack.contentHint = 'detail';
+  }
+  state.processing = wantFx;
+  const track = outboundVideoTrack();
+  for (const pc of state.pcs.values()) {
+    const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+    if (sender && track && sender.track !== track) sender.replaceTrack(track).catch(() => {});
+    if (sender) tuneSender(sender);
+  }
+  updatePreviewChrome();
+}
+function tuneSender(sender) {
+  try {
+    const p = sender.getParameters();
+    if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+    const h = state.videoTrack?.getSettings?.().height || 1080;
+    p.encodings[0].maxBitrate = h >= 2000 ? 22_000_000 : h >= 1000 ? (state.want.fps > 30 ? 12_000_000 : 8_000_000) : 4_000_000;
+    p.encodings[0].maxFramerate = state.want.fps;
+    sender.setParameters(p).catch(() => {});
+  } catch {}
+}
+function updatePreviewChrome() {
+  const front = state.facing === 'user';
+  if (state.processing) {
+    fxCanvas.classList.remove('hidden'); rawVideo.classList.add('hidden');
+    fxCanvas.classList.toggle('mirrored', front && !state.fx.mirror);
+  } else {
+    fxCanvas.classList.add('hidden'); rawVideo.classList.remove('hidden');
+    rawVideo.classList.toggle('mirrored', front);
+  }
+}
+
+/* --------------------------------------------------------- render loop */
+let frameNo = 0;
+function startRenderLoop() {
+  const loop = () => {
+    requestAnimationFrame(loop);
+    frameNo++;
+    if (state.fx.bgmode !== 'off' && !state.segFailed) runSegmentation();
+    if (state.fx.autoframe && !state.faceFailed) runFaceDetection();
+    if (!state.processing) return;
+    const vw = rawVideo.videoWidth, vh = rawVideo.videoHeight;
+    if (!vw) return;
+    if (fxCanvas.width !== vw || fxCanvas.height !== vh) { fxCanvas.width = vw; fxCanvas.height = vh; }
+    drawFrame(vw, vh);
+  };
+  requestAnimationFrame(loop);
+}
+function drawFrame(vw, vh) {
+  const f = state.fx, ctx = fxCtx;
+  // PTZ crop window
+  const scale = Math.max(1, f.ptz.scale);
+  const sw = vw / scale, sh = vh / scale;
+  const sx = Math.min(Math.max(f.ptz.x * vw - sw / 2, 0), vw - sw);
+  const sy = Math.min(Math.max(f.ptz.y * vh - sh / 2, 0), vh - sh);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  if (f.mirror) { ctx.translate(vw, 0); ctx.scale(-1, 1); }
+  ctx.filter = f.lowlight ? 'brightness(1.38) contrast(1.06) saturate(1.12)' : 'none';
+
+  if (f.bgmode !== 'off' && state.segMask) {
+    // Background plate: virtual image or blurred live frame
+    if (f.bgmode === 'image' && state.bgImageCanvas) {
+      ctx.filter = 'none';
+      drawCover(ctx, state.bgImageCanvas, vw, vh);
+    } else {
+      ctx.filter = `blur(${f.bgstrength}px) brightness(0.92) saturate(1.05)`;
+      ctx.drawImage(rawVideo, sx, sy, sw, sh, -f.bgstrength, -f.bgstrength, vw + f.bgstrength * 2, vh + f.bgstrength * 2);
+    }
+    // Person cut-out
+    const pc = personCanvas, pctx = pc.getContext('2d');
+    if (pc.width !== vw) { pc.width = vw; pc.height = vh; }
+    pctx.globalCompositeOperation = 'copy';
+    pctx.filter = 'none';
+    pctx.drawImage(state.segMask, sx, sy, sw, sh, 0, 0, vw, vh);
+    pctx.globalCompositeOperation = 'source-in';
+    if (f.lowlight) pctx.filter = 'brightness(1.38) contrast(1.06) saturate(1.12)';
+    pctx.drawImage(rawVideo, sx, sy, sw, sh, 0, 0, vw, vh);
+    ctx.filter = 'none';
+    ctx.drawImage(pc, 0, 0);
+  } else {
+    ctx.drawImage(rawVideo, sx, sy, sw, sh, 0, 0, vw, vh);
+  }
+
+  if (f.beauty > 0) {
+    // Soft-skin: blurred copy blended back (frequency-separation lite)
+    const bc = blurCanvas, bctx = bc.getContext('2d');
+    const bw = Math.max(2, vw >> 2), bh = Math.max(2, vh >> 2);
+    if (bc.width !== bw) { bc.width = bw; bc.height = bh; }
+    bctx.filter = 'blur(2px)';
+    bctx.drawImage(rawVideo, sx, sy, sw, sh, 0, 0, bw, bh);
+    ctx.globalAlpha = (f.beauty / 100) * 0.5;
+    ctx.filter = 'brightness(1.04) saturate(1.05)';
+    ctx.drawImage(bc, 0, 0, vw, vh);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
+/* ------------------------------------------- AI segmentation (MediaPipe) */
+async function ensureSegmentation() {
+  if (state.seg || state.segFailed) return;
+  try {
+    toast('Loading on-device AI model…');
+    await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js');
+    const seg = new SelfieSegmentation({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${f}` });
+    seg.setOptions({ modelSelection: 1, selfieMode: state.facing === 'user' });
+    seg.onResults(r => { state.segMask = r.segmentationMask; state.segBusy = false; });
+    state.seg = seg;
+    toast('🤖 AI background blur ready — running 100% on this phone');
+  } catch (e) {
+    state.segFailed = true;
+    toast('AI blur unavailable on this device/network');
+    sendState(true);
+  }
+}
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
+async function runSegmentation() {
+  if (!state.seg) { ensureSegmentation(); return; }
+  if (state.segBusy || !rawVideo.videoWidth || frameNo % 2) return;
+  state.segBusy = true;
+  try { await state.seg.send({ image: rawVideo }); } catch { state.segBusy = false; }
+}
+
+/* ---------------------------------- virtual background plates (presets) */
+function buildBgPreset(name) {
+  const c = document.createElement('canvas'); c.width = 1280; c.height = 720;
+  const x = c.getContext('2d');
+  const soft = fn => { x.save(); try { x.filter = 'blur(30px)'; } catch {} fn(); x.restore(); };
+  if (name === 'studio') {
+    const g = x.createRadialGradient(640, 300, 80, 640, 360, 760);
+    g.addColorStop(0, '#2a3358'); g.addColorStop(1, '#0a0e1f');
+    x.fillStyle = g; x.fillRect(0, 0, 1280, 720);
+    const cols = ['rgba(47,155,255,.5)', 'rgba(255,108,199,.35)', 'rgba(110,180,255,.4)', 'rgba(255,215,94,.28)'];
+    soft(() => { for (let i = 0; i < 26; i++) { x.fillStyle = cols[i % 4]; x.beginPath(); x.arc(Math.random() * 1280, Math.random() * 720, 18 + Math.random() * 55, 0, 7); x.fill(); } });
+  } else if (name === 'gradient') {
+    const g = x.createLinearGradient(0, 0, 1280, 720);
+    g.addColorStop(0, '#8ab4ff'); g.addColorStop(.45, '#2f9bff'); g.addColorStop(1, '#ffc93c');
+    x.fillStyle = g; x.fillRect(0, 0, 1280, 720);
+    soft(() => { x.fillStyle = 'rgba(255,255,255,.18)'; for (let i = 0; i < 8; i++) { x.beginPath(); x.arc(Math.random() * 1280, Math.random() * 720, 60 + Math.random() * 120, 0, 7); x.fill(); } });
+  } else if (name === 'solid') {
+    x.fillStyle = '#101a33'; x.fillRect(0, 0, 1280, 720);
+    const g = x.createRadialGradient(640, 330, 120, 640, 360, 780);
+    g.addColorStop(0, 'rgba(255,255,255,.09)'); g.addColorStop(1, 'rgba(0,0,0,.32)');
+    x.fillStyle = g; x.fillRect(0, 0, 1280, 720);
+  } else { // office
+    const g = x.createLinearGradient(0, 0, 0, 720);
+    g.addColorStop(0, '#3c4a68'); g.addColorStop(.7, '#2a3550'); g.addColorStop(1, '#1d2742');
+    x.fillStyle = g; x.fillRect(0, 0, 1280, 720);
+    soft(() => {
+      x.fillStyle = 'rgba(200,225,255,.55)';
+      x.fillRect(90, 70, 300, 430); x.fillRect(430, 70, 300, 430); x.fillRect(770, 70, 300, 430);
+      x.fillStyle = 'rgba(70,200,140,.35)';
+      x.beginPath(); x.arc(1150, 640, 130, 0, 7); x.fill();
+      x.beginPath(); x.arc(80, 670, 100, 0, 7); x.fill();
+    });
+    x.fillStyle = 'rgba(0,0,0,.18)'; x.fillRect(0, 500, 1280, 220);
+  }
+  state.bgImageCanvas = c;
+}
+function setCustomBg(dataUrl) {
+  const img = new Image();
+  img.onload = () => { state.bgImageCanvas = img; toast('🖼️ Custom background applied'); };
+  img.onerror = () => toast('Could not load that background image');
+  img.src = dataUrl;
+}
+function drawCover(ctx, img, w, h) {
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  if (!iw || !ih) return;
+  const s = Math.max(w / iw, h / ih), dw = iw * s, dh = ih * s;
+  ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+}
+
+/* -------------------------------------- AI auto-framing (face tracking) */
+async function ensureFaceDetection() {
+  if (state.face || state.faceFailed) return;
+  try {
+    toast('Loading face-tracking AI…');
+    if (typeof FaceDetection === 'undefined')
+      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js');
+    const fd = new FaceDetection({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${f}` });
+    fd.setOptions({ model: 'short', minDetectionConfidence: 0.55 });
+    fd.onResults(onFaceResults);
+    state.face = fd;
+    toast('🎯 Auto-framing ready — tracking runs on this phone');
+  } catch (e) {
+    state.faceFailed = true;
+    toast('Auto-framing unavailable on this device/network');
+    sendState(true);
+  }
+}
+async function runFaceDetection() {
+  if (!state.face) { ensureFaceDetection(); return; }
+  if (state.faceBusy || !rawVideo.videoWidth || frameNo % 3) return;
+  state.faceBusy = true;
+  try { await state.face.send({ image: rawVideo }); } catch { state.faceBusy = false; }
+}
+function onFaceResults(r) {
+  state.faceBusy = false;
+  if (!state.fx.autoframe) return;
+  const dets = (r && r.detections) || [];
+  const p = state.fx.ptz;
+  if (!dets.length) {
+    // Subject lost: after a grace period, ease back to the wide shot
+    if (performance.now() - state.lastFaceAt > 2500) {
+      p.x += (0.5 - p.x) * 0.03; p.y += (0.5 - p.y) * 0.03; p.scale += (1 - p.scale) * 0.03;
+    }
+    return;
+  }
+  // Track the largest face
+  let bb = null, best = 0;
+  for (const d of dets) { const a = d.boundingBox.width * d.boundingBox.height; if (a > best) { best = a; bb = d.boundingBox; } }
+  if (!bb) return;
+  state.lastFaceAt = performance.now();
+  const targetScale = Math.min(3, Math.max(1, 0.34 / Math.max(0.05, bb.height)));  // face ≈ 34% of frame height
+  const targetX = bb.xCenter;
+  const targetY = Math.min(1, Math.max(0, bb.yCenter + 0.08 / targetScale));       // face rides the upper third
+  // Deadband + smoothing = buttery, jitter-free camera moves
+  if (Math.abs(targetX - p.x) > 0.012) p.x += (targetX - p.x) * 0.10;
+  if (Math.abs(targetY - p.y) > 0.012) p.y += (targetY - p.y) * 0.10;
+  if (Math.abs(targetScale - p.scale) / p.scale > 0.03) p.scale += (targetScale - p.scale) * 0.08;
+}
+
+/* -------------------------------------------------------------- WebRTC */
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}`);
+  state.ws = ws;
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: 'join', room: state.room, role: 'camera', name: state.name }));
+  };
+  ws.onmessage = async ev => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'welcome') {
+      state.myId = msg.id;
+      publishCaps();
+      for (const p of msg.peers) if (p.role === 'studio' || p.role === 'output') await makePeer(p.id);
+      updateStatLine();
+    } else if (msg.type === 'peer-joined') {
+      if (msg.peer.role === 'studio' || msg.peer.role === 'output') { await makePeer(msg.peer.id); toast('Studio connected 🎬'); }
+    } else if (msg.type === 'peer-left') {
+      state.pcs.get(msg.id)?.close(); state.pcs.delete(msg.id); updateStatLine();
+    } else if (msg.type === 'relay') {
+      if (msg.kind === 'signal') onSignal(msg.from, msg.data);
+      else if (msg.kind === 'control') onControl(msg.data);
+      else if (msg.kind === 'teleprompter') onPrompter(msg.data);
+    } else if (msg.type === 'error') {
+      toast('⚠️ ' + msg.message, 5000);
+    }
+  };
+  ws.onclose = () => {
+    $('#liveChip').innerHTML = '<span class="dot"></span> RECONNECTING';
+    clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = setTimeout(connectWS, 2500);
+  };
+}
+function relay(to, kind, data) {
+  if (state.ws?.readyState === 1) state.ws.send(JSON.stringify({ type: 'relay', to, kind, data }));
+}
+function relayRole(role, kind, data) {
+  if (state.ws?.readyState === 1) state.ws.send(JSON.stringify({ type: 'relay-role', role, kind, data }));
+}
+
+async function makePeer(peerId) {
+  if (state.pcs.has(peerId)) return;
+  const pc = new RTCPeerConnection(ICE);
+  state.pcs.set(peerId, pc);
+  const vt = outboundVideoTrack();
+  if (vt) { const s = pc.addTrack(vt, state.rawStream); tuneSender(s); }
+  if (state.audioTrack) pc.addTrack(state.audioTrack, state.rawStream);
+  pc.onicecandidate = e => { if (e.candidate) relay(peerId, 'signal', { candidate: e.candidate }); };
+  pc.onconnectionstatechange = () => {
+    updateStatLine();
+    if (pc.connectionState === 'failed') { pc.close(); state.pcs.delete(peerId); setTimeout(() => makePeer(peerId), 1500); }
+  };
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  relay(peerId, 'signal', { sdp: pc.localDescription });
+}
+async function onSignal(from, data) {
+  const pc = state.pcs.get(from);
+  if (!pc) return;
+  try {
+    if (data.sdp) await pc.setRemoteDescription(data.sdp);
+    else if (data.candidate) await pc.addIceCandidate(data.candidate);
+  } catch (e) { console.warn('signal error', e); }
+}
+function anyConnected() { return [...state.pcs.values()].some(pc => pc.connectionState === 'connected'); }
+function updateStatLine() {
+  const s = state.videoTrack?.getSettings?.() || {};
+  const live = anyConnected();
+  $('#liveChip').innerHTML = live ? '<span class="dot pulse"></span> LIVE' : '<span class="dot"></span> WAITING FOR STUDIO';
+  $('#liveChip').className = live ? 'chip live' : 'chip';
+  $('#statLine').textContent = `${s.width || '–'}×${s.height || '–'} · ${state.outFps || Math.round(s.frameRate || 0)}fps · ${state.outKbps}kbps · code ${state.room}`;
+  $('#dimInfo').textContent = `${s.width || ''}×${s.height || ''} · ${state.outKbps} kbps`;
+}
+
+/* ------------------------------------------------------ remote controls */
+async function onControl(d) {
+  if (!d || !d.action) return;
+  const track = state.videoTrack;
+  try {
+    switch (d.action) {
+      case 'lens':
+        toast('Switching lens…');
+        await startCapture(d.deviceId ? { deviceId: { exact: d.deviceId } } : { facingMode: d.facing || 'environment' });
+        break;
+      case 'resolution':
+        state.want.width = d.width; state.want.height = d.height;
+        await startCapture(state.currentDeviceId ? { deviceId: { exact: state.currentDeviceId } } : { facingMode: state.facing });
+        break;
+      case 'fps':
+        state.want.fps = d.fps;
+        await startCapture(state.currentDeviceId ? { deviceId: { exact: state.currentDeviceId } } : { facingMode: state.facing });
+        break;
+      case 'zoom': {
+        const caps = track.getCapabilities?.() || {};
+        if (caps.zoom) await track.applyConstraints({ advanced: [{ zoom: d.value }] });
+        else { state.fx.ptz.scale = Math.max(1, d.value); refreshOutbound(); }  // digital PTZ fallback
+        break;
+      }
+      case 'torch': state.torch = !!d.on; await applyTorch(state.torch); break;
+      case 'exposureComp': await track.applyConstraints({ advanced: [{ exposureCompensation: d.value }] }); break;
+      case 'wbTemp': await track.applyConstraints({ advanced: [{ whiteBalanceMode: 'manual', colorTemperature: d.value }] }); break;
+      case 'wbAuto': await track.applyConstraints({ advanced: [{ whiteBalanceMode: 'continuous' }] }); break;
+      case 'focusMode': await track.applyConstraints({ advanced: [{ focusMode: d.mode }] }); break;
+      case 'focusDistance': await track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: d.value }] }); break;
+      case 'iso': await track.applyConstraints({ advanced: [{ exposureMode: 'manual', iso: d.value }] }); break;
+      case 'exposureAuto': await track.applyConstraints({ advanced: [{ exposureMode: 'continuous' }] }); break;
+      case 'beauty': state.fx.beauty = d.value; refreshOutbound(); break;
+      case 'lowlight': state.fx.lowlight = !!d.on; refreshOutbound(); break;
+      case 'bgblur': // legacy alias
+        state.fx.bgmode = d.on ? 'blur' : 'off'; state.fx.bgblur = !!d.on;
+        if (d.strength) state.fx.bgstrength = d.strength;
+        if (d.on) ensureSegmentation();
+        refreshOutbound();
+        break;
+      case 'bgmode': {
+        const m = ['off', 'blur', 'image'].includes(d.mode) ? d.mode : 'off';
+        state.fx.bgmode = m; state.fx.bgblur = m === 'blur';
+        if (d.strength) state.fx.bgstrength = d.strength;
+        if (m === 'image') {
+          if (d.imageData) setCustomBg(d.imageData);
+          else if (d.preset) { state.fx.bgPreset = d.preset; buildBgPreset(d.preset); }
+          else if (!state.bgImageCanvas) buildBgPreset(state.fx.bgPreset || 'office');
+        }
+        if (m !== 'off') ensureSegmentation();
+        refreshOutbound();
+        break;
+      }
+      case 'autoframe':
+        state.fx.autoframe = !!d.on;
+        if (d.on) { ensureFaceDetection(); toast('🎯 AI auto-framing ON'); }
+        else toast('Auto-framing off');
+        refreshOutbound();
+        break;
+      case 'mirror': state.fx.mirror = !!d.on; refreshOutbound(); break;
+      case 'ptz': if (!state.fx.autoframe) { Object.assign(state.fx.ptz, d.ptz || {}); refreshOutbound(); } break;
+      case 'mic': state.micOn = !!d.on; if (state.audioTrack) state.audioTrack.enabled = state.micOn; syncLocalButtons(); break;
+      case 'dim': setDim(!!d.on); break;
+      case 'ping': break;
+    }
+  } catch (e) { console.warn('control failed', d.action, e); }
+  sendState(true);
+}
+async function applyTorch(on) {
+  try { await state.videoTrack.applyConstraints({ advanced: [{ torch: on }] }); }
+  catch { if (on) toast('Torch not controllable from the browser on this device'); }
+  syncLocalButtons();
+}
+
+/* ----------------------------------------------------------- teleprompter */
+const prompterEl = $('#prompter'), prompterText = $('#prompterText');
+let lastPrompterT = performance.now();
+function onPrompter(d) {
+  const p = state.prompter;
+  if (typeof d.text === 'string') { p.text = d.text; prompterText.textContent = d.text; p.offset = 0; }
+  if (typeof d.playing === 'boolean') p.playing = d.playing;
+  if (typeof d.speed === 'number') p.speed = d.speed;
+  if (typeof d.size === 'number') { p.size = d.size; prompterText.style.fontSize = d.size + 'px'; }
+  if (d.reset) p.offset = 0;
+  prompterEl.classList.toggle('hidden', !p.text);
+}
+(function prompterLoop(now) {
+  requestAnimationFrame(prompterLoop);
+  const dt = Math.min(0.05, (now - lastPrompterT) / 1000); lastPrompterT = now;
+  const p = state.prompter;
+  if (p.playing && p.text) {
+    p.offset += p.speed * dt;
+    const max = Math.max(0, prompterText.scrollHeight - prompterEl.clientHeight);
+    if (p.offset > max) { p.offset = max; p.playing = false; }
+    prompterText.style.transform = `translateY(${-p.offset}px)`;
+  }
+})(performance.now());
+
+/* --------------------------------------------------------------- telemetry */
+async function collectStats() {
+  const pc = [...state.pcs.values()].find(p => p.connectionState === 'connected');
+  if (!pc) { updateStatLine(); return; }
+  try {
+    const stats = await pc.getStats();
+    stats.forEach(r => {
+      if (r.type === 'outbound-rtp' && r.kind === 'video') {
+        const now = r.timestamp;
+        if (state.lastStatT) {
+          const dt = (now - state.lastStatT) / 1000;
+          if (dt > 0) state.outKbps = Math.round(((r.bytesSent - state.lastBytes) * 8) / dt / 1000);
+        }
+        state.lastBytes = r.bytesSent; state.lastStatT = now;
+        if (r.framesPerSecond) state.outFps = Math.round(r.framesPerSecond);
+      }
+    });
+  } catch {}
+  updateStatLine();
+}
+function sendState(immediate) {
+  const s = state.videoTrack?.getSettings?.() || {};
+  relayRole('studio', 'state', {
+    name: state.name,
+    settings: { width: s.width, height: s.height, frameRate: s.frameRate, facingMode: s.facingMode },
+    want: state.want, fx: state.fx, processing: state.processing,
+    torch: state.torch, micOn: state.micOn, dim: state.dim,
+    segFailed: state.segFailed, segReady: !!state.seg, faceReady: !!state.face, faceFailed: state.faceFailed,
+    outKbps: state.outKbps, outFps: state.outFps,
+    lenses: state.lenses, currentDeviceId: state.currentDeviceId, trackCaps: trackCaps(),
+    battery: state.battery ? { level: Math.round(state.battery.level * 100), charging: state.battery.charging } : null,
+    connected: anyConnected(),
+  });
+  if (immediate) updateStatLine();
+}
+async function initBattery() {
+  try {
+    if (!navigator.getBattery) return;
+    state.battery = await navigator.getBattery();
+    const upd = () => { $('#battLine').textContent = `${state.battery.charging ? '⚡' : '🔋'} ${Math.round(state.battery.level * 100)}%`; };
+    state.battery.addEventListener('levelchange', upd);
+    state.battery.addEventListener('chargingchange', upd);
+    upd();
+  } catch {}
+}
+async function requestWakeLock() {
+  try { await navigator.wakeLock?.request('screen'); } catch {}
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') navigator.wakeLock?.request('screen').catch(() => {}); });
+}
+
+/* ------------------------------------------------------------- local UI */
+function setDim(on) {
+  state.dim = on;
+  $('#dimOverlay').classList.toggle('hidden', !on);
+  syncLocalButtons();
+}
+function syncLocalButtons() {
+  $('#torchBtn').classList.toggle('on', state.torch);
+  $('#micBtn').classList.toggle('on', state.micOn);
+  $('#micBtn').textContent = state.micOn ? '🎙️' : '🔇';
+  $('#dimBtn').classList.toggle('on', state.dim);
+}
+$('#flipBtn').addEventListener('click', async () => {
+  const next = state.facing === 'user' ? 'environment' : 'user';
+  await startCapture({ facingMode: next });
+  sendState(true);
+});
+$('#torchBtn').addEventListener('click', () => { state.torch = !state.torch; applyTorch(state.torch); sendState(true); });
+$('#micBtn').addEventListener('click', () => { state.micOn = !state.micOn; if (state.audioTrack) state.audioTrack.enabled = state.micOn; syncLocalButtons(); sendState(true); });
+$('#dimBtn').addEventListener('click', () => { setDim(true); sendState(true); });
+$('#dimOverlay').addEventListener('click', () => { setDim(false); sendState(true); });
+$('#leaveBtn').addEventListener('click', () => location.reload());
+navigator.mediaDevices?.addEventListener?.('devicechange', () => { refreshLenses().then(publishCaps); });
+syncLocalButtons();
+</script>
+</body>
+</html>
