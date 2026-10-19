@@ -12,6 +12,9 @@
   "author": "",
   "license": "ISC",
   "description": "AirStudio — phone-as-4K-studio-webcam (WebRTC, multi-cam, on-device AI)",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "qrcode": "^1.5.4",
     "ws": "^8.22.0"
