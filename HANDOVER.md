@@ -120,7 +120,16 @@ AirStudio — Phone-as-4K-Studio-Webcam software. Node.js + WebRTC server with w
 **Verification:** camera.html script syntax OK; 14/14 server+WS tests pass.
 **Status:** Committed `6e2fb71` and pushed to `main`; Render auto-deploy ON COMMIT → live at `https://airstudio.onrender.com`.
 
-### 10. Paystack Production Setup (PENDING)
+### 10. Phone Camera Crash Fix — "Cannot read properties of undefined (reading 'w')" (FIXED + DEPLOYED)
+**Problem:** Phone camera showed `Camera access failed: Cannot read properties of undefined (reading 'w'). Allow camera permission and retry.` and would never start — QR code, barcode, and direct URL all failed identically.
+**Root cause:** `pickBestResolution()` in `public/camera.html` called `state.videoTrack.getCapabilities?.()` which on many mobile browsers **returns `undefined`** (not an object). The `?.` only guards if `getCapabilities` itself is missing, not its return value. So `caps` was `undefined`, and `caps.width` threw, crashing `applyStudioAuto`, which is `await`-ed from `join()` — so `startCapture` succeeded but the subsequent `applyStudioAuto` throw aborted `join()` before the camera UI ever appeared.
+**Fix (`public/camera.html`):**
+- `pickBestResolution()`: `caps = state.videoTrack.getCapabilities?.() || {}` — always defaults to `{}`; uses optional chaining `caps?.width` throughout; all `state.fx.*` accesses use `?.` with fallbacks.
+- `applyStudioAuto()`: Entire body wrapped in `try/catch` — Studio Auto can NEVER break camera startup. If pro settings fail, the camera still starts and shows a non-fatal toast.
+**Verification:** camera.html script syntax OK.
+**Status:** Committed `60b0a20` and pushed to `main`; Render auto-deploy ON COMMIT → live at `https://airstudio.onrender.com`.
+
+### 11. Paystack Production Setup (PENDING)
 **Current state:** Paystack env vars are set in Render (`PAYSTACK_SECRET_KEY`, `PAYSTACK_PUBLIC_KEY`, prices, `BASE_URL`), `NODE_ENV=production` is set.
 **Plan:** Test live Paystack checkout → webhook key issuance flow end-to-end.
 
