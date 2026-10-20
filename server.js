@@ -78,7 +78,7 @@ const ROUTES = {
   '/output': 'output.html',
 };
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   const url = new URL(req.url, 'http://localhost');
 
   // QR code for pairing links
@@ -226,14 +226,18 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
     res.end(data);
   });
-});
+}
+
+const server = http.createServer(handleRequest);
+module.exports = handleRequest;
 
 // ---------------------------------------------------------------- signaling
 /** rooms: Map<code, Map<peerId, peer>>  peer = {id, role, name, caps, ws} */
 const rooms = new Map();
 let peerSeq = 1;
 
-const wss = new WebSocketServer({ server });
+if (require.main === module) {
+  const wss = new WebSocketServer({ server });
 
 function send(ws, msg) {
   if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -327,3 +331,4 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`AirStudio server running on http://0.0.0.0:${PORT}`);
   if (!IS_PROD) console.log(`Demo Premium license key: ${DEMO_KEY}  (generate more: node tools/genkey.js)`);
 });
+}

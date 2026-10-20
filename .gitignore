@@ -7,3 +7,6 @@ npm-debug.log*
 Thumbs.db
 .idea/
 *.zip
+
+.vercel
+.env*
