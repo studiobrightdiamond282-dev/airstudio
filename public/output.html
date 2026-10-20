@@ -44,6 +44,8 @@ const ICE = { iceServers: [
   { urls: 'stun:stun.cloudflare.com:3478' },
 ]};
   const camOrder = [];
+  let peers = new Map();   // peerId -> {pc, stream}
+  let programId = null;    // cameraId set by Studio 'program' relay
   function trackPeer(id) {
     if (!camOrder.includes(id)) camOrder.push(id);
   }
