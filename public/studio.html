@@ -123,6 +123,12 @@
     </div>
 
     <div class="panel pad" style="margin-top:14px">
+      <h3 class="title">🎥 Individual camera outputs (for vMix/OBS multi-source)</h3>
+      <p class="note" style="margin-bottom:10px">Each connected phone gets its own direct feed. Add each URL as a separate Browser Source in OBS/vMix to show all cameras at the same time.</p>
+      <div id="camLinks" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+
+    <div class="panel pad" style="margin-top:14px">
       <h3 class="title">🚀 Go live with this feed</h3>
       <details class="help" open>
         <summary>OBS Studio (recommended — zero extra load)</summary>
@@ -400,6 +406,7 @@ function ensureCam(peer) {
   if (!programId) setProgram(peer.id);
   if (!controlId) selectControl(peer.id);
   renderCard(cam);
+  renderCamLinks();
   return cam;
 }
 function removeCam(id) {
@@ -407,6 +414,7 @@ function removeCam(id) {
   c.pc?.close(); c.cardEl.remove(); cams.delete(id);
   if (programId === id) { programId = null; const first = cams.keys().next().value; if (first) setProgram(first); else showEmptyProgram(); }
   if (controlId === id) { controlId = null; const first = cams.keys().next().value; if (first) selectControl(first); else refreshControlPanel(); }
+  renderCamLinks();
 }
 function renderCard(c) {
   c.cardEl.querySelector('.nm').textContent = c.state?.name || c.name || 'Camera';
@@ -421,6 +429,30 @@ function renderCard(c) {
   c.cardEl.classList.toggle('controlled', controlId === c.id && programId !== c.id);
   c.cardEl.querySelector('.cut').textContent = programId === c.id ? '● ON AIR' : 'CUT ⏵ Program';
   c.cardEl.querySelector('.cut').classList.toggle('danger', programId === c.id);
+  renderCamLinks();
+}
+
+function renderCamLinks() {
+  const div = document.getElementById('camLinks');
+  if (!div) return;
+  if (cams.size === 0) {
+    div.innerHTML = '<span class="note">No cameras connected yet</span>';
+    return;
+  }
+  div.innerHTML = '';
+  let idx = 1;
+  for (const c of cams.values()) {
+    const url = `${location.origin}/output?code=${ROOM}&camIndex=${idx}&audio=1`;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:#0a1024';
+    const camName = c.state?.name || c.name || `Camera ${idx}`;
+    row.innerHTML = `<span style="font-weight:700;min-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(camName)}</span>
+      <input class="input" style="flex:1;font-size:10px;font-family:var(--mono);padding:6px 8px" value="${url}" readonly>
+      <button class="btn small">Copy</button>`;
+    row.querySelector('button').onclick = () => copy(url, camName + ' link copied');
+    div.appendChild(row);
+    idx++;
+  }
 }
 
 function setProgram(id) {

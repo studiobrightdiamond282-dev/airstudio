@@ -23,35 +23,71 @@
 <video id="v" autoplay playsinline></video>
 <div id="wait"><b>AirStudio Program Output</b><span id="waitSub">Waiting for a camera…</span></div>
 
-<script>
-'use strict';
-/* AirStudio clean program feed — for OBS Browser Source or fullscreen sharing.
-   URL params: ?code=XXXXXX  ?fit=cover  ?audio=1 (unmute, for OBS)          */
-const params = new URLSearchParams(location.search);
-const ROOM = (params.get('code') || '').toUpperCase();
-const video = document.getElementById('v');
-video.muted = params.get('audio') !== '1';
-if (params.get('fit') === 'cover') video.style.objectFit = 'cover';
-if (!ROOM) document.getElementById('waitSub').textContent = 'Add ?code=YOURCODE (from the Studio) to this URL.';
+  <script>
+    'use strict';
+    /* AirStudio clean program feed — for OBS Browser Source or fullscreen sharing.
+       URL params: ?code=XXXXXX  ?fit=cover  ?audio=1 (unmute, for OBS)
+                    ?cam=CAMERA_ID  ?camIndex=1  (view specific camera directly)
+    */
+    const params = new URLSearchParams(location.search);
+    const ROOM = (params.get('code') || '').toUpperCase();
+    const TARGET_CAM = params.get('cam') || '';
+    const CAM_INDEX = parseInt(params.get('camIndex') || params.get('camindex') || '0', 10);
+    const video = document.getElementById('v');
+    video.muted = params.get('audio') !== '1';
+    if (params.get('fit') === 'cover') video.style.objectFit = 'cover';
+    if (!ROOM) document.getElementById('waitSub').textContent = 'Add ?code=YOURCODE (from the Studio) to this URL.';
 
 const ICE = { iceServers: [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' },
 ]};
-const peers = new Map(); // cameraId -> {pc, stream}
-let programId = null;
-
-function showProgram() {
-  const p = peers.get(programId) || [...peers.values()][0];
-  if (p?.stream) {
-    if (video.srcObject !== p.stream) video.srcObject = p.stream;
-    document.getElementById('wait').style.display = 'none';
-  } else {
-    video.srcObject = null;
-    document.getElementById('wait').style.display = 'flex';
+  const camOrder = [];
+  function trackPeer(id) {
+    if (!camOrder.includes(id)) camOrder.push(id);
   }
-}
+
+  function showProgram() {
+    if (TARGET_CAM) {
+      const p = peers.get(TARGET_CAM);
+      if (p?.stream) {
+        if (video.srcObject !== p.stream) video.srcObject = p.stream;
+        document.getElementById('wait').style.display = 'none';
+        return;
+      } else {
+        video.srcObject = null;
+        document.getElementById('wait').style.display = 'flex';
+        document.getElementById('waitSub').textContent = 'Waiting for Camera...';
+        return;
+      }
+    }
+    if (CAM_INDEX > 0) {
+      // Use join order
+      const peerList = camOrder.length ? camOrder : [...peers.keys()];
+      if (peerList.length >= CAM_INDEX) {
+        const peerId = peerList[CAM_INDEX - 1];
+        const p = peers.get(peerId);
+        if (p?.stream) {
+          if (video.srcObject !== p.stream) video.srcObject = p.stream;
+          document.getElementById('wait').style.display = 'none';
+          return;
+        }
+      }
+      video.srcObject = null;
+      document.getElementById('wait').style.display = 'flex';
+      document.getElementById('waitSub').textContent = 'Waiting for Camera ' + CAM_INDEX + '...';
+      return;
+    }
+    const p = peers.get(programId) || [...peers.values()][0];
+    if (p?.stream) {
+      if (video.srcObject !== p.stream) video.srcObject = p.stream;
+      document.getElementById('wait').style.display = 'none';
+    } else {
+      video.srcObject = null;
+      document.getElementById('wait').style.display = 'flex';
+    }
+  }
 
 function connect() {
   if (!ROOM) return;
@@ -67,37 +103,41 @@ function openSocket(host) {
   const relay = (to, kind, data) => ws.readyState === 1 && ws.send(JSON.stringify({ type: 'relay', to, kind, data }));
   ws.onopen = () => ws.send(JSON.stringify({ type: 'join', room: ROOM, role: 'output', name: 'Program Output' }));
   ws.onclose = () => setTimeout(connect, 2000);
-  ws.onmessage = async ev => {
-    const m = JSON.parse(ev.data);
-    if (m.type === 'peer-left') {
-      peers.get(m.id)?.pc.close(); peers.delete(m.id);
-      if (programId === m.id) programId = null;
-      showProgram();
-      return;
-    }
-    if (m.type !== 'relay') return;
-    if (m.kind === 'program') { programId = m.data.cameraId; showProgram(); return; }
-    if (m.kind !== 'signal') return;
+    ws.onmessage = async ev => {
+      const m = JSON.parse(ev.data);
+      if (m.type === 'peer-joined') {
+        trackPeer(m.peer.id);
+      }
+      if (m.type === 'peer-left') {
+        peers.get(m.id)?.pc.close(); peers.delete(m.id);
+        if (programId === m.id) programId = null;
+        showProgram();
+        return;
+      }
+      if (m.type !== 'relay') return;
+      if (m.kind === 'program') { programId = m.data.cameraId; showProgram(); return; }
+      if (m.kind !== 'signal') return;
 
     let peer = peers.get(m.from);
     if (!peer) {
+      trackPeer(m.from);
       const pc = new RTCPeerConnection(ICE);
       peer = { pc, stream: null };
       peers.set(m.from, peer);
       pc.onicecandidate = e => { if (e.candidate) relay(m.from, 'signal', { candidate: e.candidate }); };
       pc.ontrack = e => { peer.stream = e.streams[0] || new MediaStream([e.track]); showProgram(); };
     }
-    try {
-      if (m.data.sdp) {
-        await peer.pc.setRemoteDescription(m.data.sdp);
-        if (m.data.sdp.type === 'offer') {
-          const ans = await peer.pc.createAnswer();
-          await peer.pc.setLocalDescription(ans);
-          relay(m.from, 'signal', { sdp: peer.pc.localDescription });
-        }
-      } else if (m.data.candidate) await peer.pc.addIceCandidate(m.data.candidate);
-    } catch (e) { console.warn(e); }
-  };
+      try {
+        if (m.data.sdp) {
+          await peer.pc.setRemoteDescription(m.data.sdp);
+          if (m.data.sdp.type === 'offer') {
+            const ans = await peer.pc.createAnswer();
+            await peer.pc.setLocalDescription(ans);
+            relay(m.from, 'signal', { sdp: peer.pc.localDescription });
+          }
+        } else if (m.data.candidate) await peer.pc.addIceCandidate(m.data.candidate);
+      } catch (e) { console.warn(e); }
+    };
 }
 connect();
 document.addEventListener('dblclick', () => {

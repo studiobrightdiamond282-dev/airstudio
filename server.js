@@ -297,16 +297,21 @@ wss.on('connection', (ws) => {
       if (!rooms.has(code)) rooms.set(code, new Map());
       const room = rooms.get(code);
 
-      // Cap cameras at 4 per room (multi-cam switcher limit)
-      if (msg.role === 'camera' && [...room.values()].filter(p => p.role === 'camera').length >= 4) {
-        send(ws, { type: 'error', message: 'This studio already has 4 cameras connected.' });
-        return;
+      // Allow multiple cameras (Iriun-style: each camera is a separate source)
+      if (msg.role === 'camera') {
+        const camCount = [...room.values()].filter(p => p.role === 'camera').length;
+        // Auto-assign Camera N name if no custom name or default name
+        if (!msg.name || msg.name === 'Device' || msg.name === 'Phone Camera') {
+          msg.name = `Camera ${camCount + 1}`;
+        } else if (/^camera\s*\d*$/i.test(msg.name) || msg.name.trim() === '') {
+          msg.name = `Camera ${camCount + 1}`;
+        }
       }
 
       me = {
         id: 'p' + (peerSeq++).toString(36) + Date.now().toString(36).slice(-3),
         role: ['studio', 'camera', 'output'].includes(msg.role) ? msg.role : 'camera',
-        name: String(msg.name || 'Device').slice(0, 40),
+        name: String(msg.name || `Camera ${[...room.values()].filter(p => p.role === 'camera').length + 1}`).slice(0, 40),
         caps: msg.caps || null,
         room: code,
         ws,
