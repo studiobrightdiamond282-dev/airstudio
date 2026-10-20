@@ -148,7 +148,7 @@ AirStudio — Phone-as-4K-Studio-Webcam software. Node.js + WebRTC server with w
 | Platform | URL | Purpose |
 |----------|-----|---------|
 | Render | `https://airstudio.onrender.com` | Primary — full WebSocket signaling, multi-cam |
-| Vercel | `https://airstudio-one.vercel.app` | Static site + API health check only |
+| Vercel | `https://airstudiocam.vercel.app` | Static site + API health check only |
 
 ---
 
