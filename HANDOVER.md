@@ -129,7 +129,21 @@ AirStudio — Phone-as-4K-Studio-Webcam software. Node.js + WebRTC server with w
 **Verification:** camera.html script syntax OK.
 **Status:** Committed `60b0a20` and pushed to `main`; Render auto-deploy ON COMMIT → live at `https://airstudio.onrender.com`.
 
-### 11. Paystack Production Setup (PENDING)
+### 11. Phone Overheating + Lag Fix — Adaptive Quality System (FIXED + DEPLOYED)
+**Problem:** Phone overheated and camera lagged badly during livestream even on 5G/fiber. Root causes: 4K default resolution, up to 22Mbps bitrate, uncapped render loop running at max FPS, no thermal/battery awareness, wake lock keeping screen at full brightness.
+**Fix (`public/camera.html`):**
+- **Default resolution lowered:** 1920×1080 → 1280×720 (much less encoder load)
+- **pickBestResolution():** Thermal-aware — 720p when warm/hot, 1080p only when cool; never defaults to 4K for streaming
+- **tuneSender():** Bitrates aggressively cut (22Mbps→6Mbps max, 12Mbps→3.5Mbps), maxFramerate capped at targetFps, keyframe interval optimized
+- **tuneSenderForAll():** Re-applies tuned params to all peer connections when quality tier changes
+- **Render loop FPS throttle:** Skips frames to hit targetFps (default 30), measures actual FPS, prevents CPU from running at max speed
+- **collectStats() adaptive quality:** Monitors outKbps → infers network quality (good/degraded/poor); infers thermal from FPS drops → auto-increments thermalLevel; re-tunes sender on tier change
+- **Battery-aware quality:** <20% battery → 20fps; <40% → 24fps; ≥40% → 30fps (only when not charging)
+- **setDim() wake-lock release:** Battery-saver dim mode releases the screen wake lock, letting the screen dim/sleep, reducing heat
+**Verification:** camera.html script syntax OK; 14/14 server+WS tests pass.
+**Status:** Committed `db8ddf5` and pushed to `main`; Render auto-deploy ON COMMIT → live at `https://airstudio.onrender.com`.
+
+### 12. Paystack Production Setup (PENDING)
 **Current state:** Paystack env vars are set in Render (`PAYSTACK_SECRET_KEY`, `PAYSTACK_PUBLIC_KEY`, prices, `BASE_URL`), `NODE_ENV=production` is set.
 **Plan:** Test live Paystack checkout → webhook key issuance flow end-to-end.
 
