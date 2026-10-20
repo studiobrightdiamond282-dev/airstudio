@@ -106,7 +106,21 @@ AirStudio — Phone-as-4K-Studio-Webcam software. Node.js + WebRTC server with w
 **Verification:** Syntax check passed.
 **Status:** Committed `a8b7dc8` and pushed to `main`; Render auto-deploy ON COMMIT → live at `https://airstudio.onrender.com`.
 
-### 9. Paystack Production Setup (PENDING)
+### 9. Professional Studio Auto Camera Settings (FIXED + DEPLOYED)
+**Problem:** Phone camera output was raw/natural — no professional photo quality, no background blur, no skin smoothing, no vibrant colour, no automatic white balance. User had to manually tweak every setting.
+**Fix (`public/camera.html`):** New automatic "Studio Auto" mode that turns ON by default the moment the camera starts — zero user action needed:
+- **Dual resolution:** Auto-picks 4K (3840×2160) if device supports it, else 1080p; manual Photo/Video/Auto toggle (⭐ + 📐 buttons in botbar)
+- **White balance:** Daylight studio 5500K continuous auto WB via track constraints
+- **Exposure:** Continuous auto with slight compensation lift
+- **Smooth face (beauty):** Auto-enabled at ~28% soft-skin frequency separation
+- **Background blur:** AI segmentation ready (MediaPipe selfie segmentation, on-device)
+- **Vibrant colour:** Saturation 1.18×, brightness 1.03×, contrast 1.05×, sharpness 1.03× applied via canvas colour grade in every frame
+- **Lowlight:** Auto brightness/contrast boost when sensor is dim
+**UI:** ⭐ Studio Auto toggle + 📐 Resolution cycle (Auto/Photo/Video) in camera botbar. Remote-controllable from Studio via `studioAuto`, `studioRes`, `studioWB`, `studioExposure`, `studioSaturation`, `studioBrightness`, `studioContrast` control actions.
+**Verification:** camera.html script syntax OK; 14/14 server+WS tests pass.
+**Status:** Committed `6e2fb71` and pushed to `main`; Render auto-deploy ON COMMIT → live at `https://airstudio.onrender.com`.
+
+### 10. Paystack Production Setup (PENDING)
 **Current state:** Paystack env vars are set in Render (`PAYSTACK_SECRET_KEY`, `PAYSTACK_PUBLIC_KEY`, prices, `BASE_URL`), `NODE_ENV=production` is set.
 **Plan:** Test live Paystack checkout → webhook key issuance flow end-to-end.
 
