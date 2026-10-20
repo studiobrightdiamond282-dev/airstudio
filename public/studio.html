@@ -346,6 +346,7 @@ function ensureCam(peer) {
     <div class="thumb"><video autoplay playsinline muted></video><div class="badges"></div></div>
     <div class="meta"><span class="nm"></span>
       <button class="btn small cut">CUT ⏵ Program</button>
+      <button class="btn small kick" title="Disconnect camera">✕</button>
     </div>`;
   $('#camStrip').appendChild(el);
   const cam = { id: peer.id, name: peer.name, caps: peer.caps, state: null, pc: null, stream: null,
@@ -353,6 +354,7 @@ function ensureCam(peer) {
   cams.set(peer.id, cam);
   el.addEventListener('click', e => { if (!e.target.classList.contains('cut')) selectControl(peer.id); });
   el.querySelector('.cut').addEventListener('click', () => setProgram(peer.id));
+  el.querySelector('.kick').addEventListener('click', e => { e.stopPropagation(); removeCam(peer.id); });
   if (!programId) setProgram(peer.id);
   if (!controlId) selectControl(peer.id);
   renderCard(cam);

@@ -103,7 +103,9 @@
   </div>
 
   <div class="botbar">
+    <button class="round-btn" id="zoomOutBtn" title="Zoom out">🔍−</button>
     <button class="round-btn" id="flipBtn" title="Flip camera">🔄</button>
+    <button class="round-btn" id="zoomInBtn" title="Zoom in">🔍+</button>
     <button class="round-btn" id="torchBtn" title="Torch">🔦</button>
     <button class="round-btn" id="micBtn" title="Microphone">🎙️</button>
     <button class="round-btn" id="dimBtn" title="Battery saver">🌙</button>
@@ -761,6 +763,49 @@ $('#torchBtn').addEventListener('click', () => { state.torch = !state.torch; app
 $('#micBtn').addEventListener('click', () => { state.micOn = !state.micOn; if (state.audioTrack) state.audioTrack.enabled = state.micOn; syncLocalButtons(); sendState(true); });
 $('#dimBtn').addEventListener('click', () => { setDim(true); sendState(true); });
 $('#dimOverlay').addEventListener('click', () => { setDim(false); sendState(true); });
+
+/* --- local zoom controls --- */
+function applyZoom() {
+  const s = Math.min(Math.max(state.fx.ptz.scale, 1), 4);
+  $('#previewWrap').style.transform = `scale(${s})`;
+  $('#previewWrap').style.transformOrigin = 'center center';
+}
+$('#zoomInBtn').addEventListener('click', () => {
+  state.fx.ptz.scale = Math.min(state.fx.ptz.scale + 0.5, 4);
+  applyZoom(); sendState(true);
+});
+$('#zoomOutBtn').addEventListener('click', () => {
+  state.fx.ptz.scale = Math.max(state.fx.ptz.scale - 0.5, 1);
+  applyZoom(); sendState(true);
+});
+
+/* --- pinch-to-zoom gesture --- */
+let pinchStartDist = 0, pinchStartScale = 1;
+const preview = $('#previewWrap');
+preview.addEventListener('touchstart', e => {
+  if (e.touches.length === 2) {
+    pinchStartDist = touchDist(e.touches);
+    pinchStartScale = state.fx.ptz.scale;
+    e.preventDefault();
+  }
+}, { passive: false });
+preview.addEventListener('touchmove', e => {
+  if (e.touches.length === 2 && pinchStartDist) {
+    const d = touchDist(e.touches);
+    const ratio = d / pinchStartDist;
+    state.fx.ptz.scale = Math.min(Math.max(pinchStartScale * ratio, 1), 4);
+    applyZoom();
+    e.preventDefault();
+  }
+}, { passive: false });
+preview.addEventListener('touchend', e => {
+  if (e.touches.length < 2) { pinchStartDist = 0; sendState(true); }
+});
+function touchDist(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
+}
 $('#leaveBtn').addEventListener('click', () => location.reload());
 navigator.mediaDevices?.addEventListener?.('devicechange', () => { refreshLenses().then(publishCaps); });
 syncLocalButtons();
