@@ -252,7 +252,7 @@ async function handleRequest(req, res) {
 
   if (url.pathname === '/api/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, rooms: rooms.size, peers: [...rooms.values()].reduce((n, r) => n + r.size, 0), standalone: require.main === module }));
+    res.end(JSON.stringify({ ok: true, rooms: rooms.size, peers: [...rooms.values()].reduce((n, r) => n + r.size, 0), standalone: server.listening }));
     return;
   }
 
@@ -273,8 +273,11 @@ module.exports = handleRequest;
 // ---------------------------------------------------------------- signaling
 /** rooms: Map<code, Map<peerId, peer>>  peer = {id, role, name, caps, ws} */
 
-if (require.main === module) {
-  const wss = new WebSocketServer({ server });
+// Attach the WebSocket signaling server UNCONDITIONALLY — Render boots via
+// index.js (which requires this module), so gating on `require.main` left
+// production serving HTTP but failing every WS upgrade
+// ("Signaling server unreachable", diag sig-*).
+const wss = new WebSocketServer({ server });
 
 function send(ws, msg) {
   if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -362,10 +365,19 @@ setInterval(() => {
       p.ws.ping();
       p.ws.once('pong', () => { p.ws._dead = false; });
     }
-}, 20000);
+}, 20000).unref();
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`AirStudio server running on http://0.0.0.0:${PORT}`);
-  if (!IS_PROD) console.log(`Demo Premium license key: ${DEMO_KEY}  (generate more: node tools/genkey.js)`);
-});
+// Standalone entry (`node server.js`): listen here. When Render boots via
+// index.js, listen() is called by that shim on the SAME exported server —
+// so WebSockets are attached either way.
+if (require.main === module) {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`AirStudio server running on http://0.0.0.0:${PORT}`);
+    if (!IS_PROD) console.log(`Demo Premium license key: ${DEMO_KEY}  (generate more: node tools/genkey.js)`);
+  });
 }
+
+// Export the HTTP server WITH the WebSocket signaling server attached so
+// entry-point shims (index.js on Render) never lose WebSockets.
+module.exports = handleRequest;
+module.exports.server = server;

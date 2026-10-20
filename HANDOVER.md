@@ -14,11 +14,19 @@ AirStudio — Phone-as-4K-Studio-Webcam software. Node.js + WebRTC server with w
 ### 1. Render Deploy Fix (MODULE_NOT_FOUND: index.js)
 **Problem:** Render was running `node index.js` but `index.js` didn't exist; entry point is `server.js`.
 **Fix:**
-- Created `/airstudio/index.js` — entry-point shim that creates HTTP server from `server.js`'s exported `handleRequest` and listens on `process.env.PORT`
-- Refactored `/airstudio/server.js` to export `handleRequest` function; `server.listen()` and WebSocket setup now only run in standalone mode (`require.main === module`)
+- Created `/airstudio/index.js` — entry-point shim that listens on `process.env.PORT` using the server exported by `server.js`
+- Refactored `/airstudio/server.js` to export `handleRequest` (for Vercel) **and** `module.exports.server` (the HTTP server with WebSocket signaling attached); `server.listen()` runs standalone when `server.js` is the main module, otherwise the shim listens
 - Fixed `package.json` `"main"` from `index.js` → `server.js`
 - Fixed `vercel.json` route ordering (API routes before static catch-all)
 - **Status:** Deployed to Render at `https://airstudio.onrender.com`; auto-deploy ON COMMIT enabled
+
+### 1b. Render Signaling Fix — "Signaling server unreachable" (diag sig-*)
+**Problem:** Studio showed `⚠ Signaling server unreachable … check that the signaling server supports WebSockets` on Render (diag `sig-5sahu9`), while HTTP/pages worked fine.
+**Root cause:** The whole `WebSocketServer` block in `server.js` was gated behind `if (require.main === module)`. Render boots via `node index.js`, which **requires** `server.js` → the condition was false → **no `WebSocketServer` was ever attached**, and `index.js` created its own bare `http.createServer(handleRequest)` (HTTP only, no upgrade handler). Every `wss://airstudio.onrender.com` upgrade was dropped.
+**Fix:**
+- `server.js`: `new WebSocketServer({ server })` + join/relay/heartbeat logic now attach **unconditionally** to the module-level server; heartbeat uses `.unref()` (safe under serverless); `/api/health` reports `standalone: server.listening`
+- `index.js`: listens on `handleRequest.server` (the WS-attached server) instead of creating a new server
+- Verified locally: `node index.js` (Render path) and `node server.js` (standalone path) both pass a 5-step WS test (`test-ws.js`: connect → join/welcome → camera join → peer-joined → relay delivery); `require('./server.js')` without listening (Vercel path) returns a function handler + non-listening server
 
 ### 2. Vercel Serverless Deployment
 **Problem:** Vercel requires serverless handler export, not `server.listen()`.
