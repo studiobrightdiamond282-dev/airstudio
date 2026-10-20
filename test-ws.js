@@ -1,8 +1,11 @@
 // Temporary test: WS signaling through the given entry point.
-// Usage: node test-ws.js <port>
+// Usage: node test-ws.js <port>          (local: ws://localhost:<port>)
+//        node test-ws.js wss://host      (live: full ws URL)
 const WebSocket = require('ws');
-const port = process.argv[2] || '3100';
-const url = `ws://localhost:${port}`;
+const arg = process.argv[2] || '3100';
+const url = /^(wss?|https?):\/\//.test(arg)
+  ? arg.replace(/^http/, 'ws')
+  : `ws://localhost:${arg}`;
 const results = [];
 
 function step(name, ok, detail) {
