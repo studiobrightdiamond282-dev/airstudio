@@ -854,12 +854,14 @@ async function applyTorch(on) {
 /* -------------------------------------------- professional studio auto */
 /* Picks the best resolution the device supports, prefers 4K for photo / 1080p for streaming. */
 async function pickBestResolution() {
-  const caps = state.videoTrack ? state.videoTrack.getCapabilities?.() : {};
-  const wCap = caps.width, hCap = caps.height, fCap = caps.frameRate;
+  // Defensive: getCapabilities() may return undefined on some mobile browsers
+  let caps = {};
+  try { caps = state.videoTrack ? (state.videoTrack.getCapabilities?.() || {}) : {}; } catch { caps = {}; }
+  const wCap = caps?.width, hCap = caps?.height, fCap = caps?.frameRate;
   const clamp = (v, c) => c ? Math.min(Math.max(v, c.min), c.max) : v;
-  let targetW = state.videoRes.w, targetH = state.videoRes.h, targetF = state.want.fps;
-  if (state.fx.resolutionMode === 'photo') { targetW = state.photoRes.w; targetH = state.photoRes.h; }
-  else if (state.fx.resolutionMode === 'video') { targetW = state.videoRes.w; targetH = state.videoRes.h; }
+  let targetW = state.fx?.videoRes?.w || 1920, targetH = state.fx?.videoRes?.h || 1080, targetF = state.want?.fps || 30;
+  if (state.fx?.resolutionMode === 'photo') { targetW = state.fx.photoRes?.w || 3840; targetH = state.fx.photoRes?.h || 2160; }
+  else if (state.fx?.resolutionMode === 'video') { targetW = state.fx.videoRes?.w || 1920; targetH = state.fx.videoRes?.h || 1080; }
   else { // auto: prefer 4K if the device can do it, else 1080p
     if (wCap && hCap) {
       const has4k = wCap.max >= 3840 && hCap.max >= 2160;
@@ -867,46 +869,52 @@ async function pickBestResolution() {
       targetH = has4k ? 2160 : (hCap.max >= 1080 ? 1080 : Math.min(720, hCap.max));
     }
   }
-  state.want.width = clamp(targetW, wCap);
-  state.want.height = clamp(targetH, hCap);
-  if (fCap) state.want.fps = clamp(targetF, fCap);
-  return { width: state.want.width, height: state.want.height, fps: state.want.fps };
+  if (state.want) { state.want.width = clamp(targetW, wCap); state.want.height = clamp(targetH, hCap); }
+  if (fCap && state.want) state.want.fps = clamp(targetF, fCap);
+  return { width: state.want?.width || targetW, height: state.want?.height || targetH, fps: state.want?.fps || targetF };
 }
 
 /* Apply the full "Studio Auto" photo-editor look: WB, exposure, colour, skin. */
 async function applyStudioAuto(on) {
-  state.fx.studioAuto = !!on;
-  $('#studioBtn').classList.toggle('on', !!on);
-  if (!on) {
-    // Reset to neutral auto
+  try {
+    state.fx.studioAuto = !!on;
+    $('#studioBtn').classList.toggle('on', !!on);
+    if (!on) {
+      // Reset to neutral auto
+      try { await state.videoTrack?.applyConstraints?.({ advanced: [{ whiteBalanceMode: 'continuous' }] }); } catch {}
+      try { await state.videoTrack?.applyConstraints?.({ advanced: [{ exposureMode: 'continuous' }] }); } catch {}
+      state.fx.beauty = 0; state.fx.lowlight = false;
+      state.fx.saturation = 1; state.fx.brightness = 1; state.fx.contrast = 1; state.fx.sharpness = 1;
+      toast('Studio Auto off — natural look');
+      sendState(true);
+      return;
+    }
+    toast('⭐ Studio Auto ON — pro photo quality');
+    // 1. Best resolution
+    await pickBestResolution();
+    await startCapture(state.currentDeviceId ? { deviceId: { exact: state.currentDeviceId } } : { facingMode: state.facing });
+    // 2. White balance — daylight studio (5500K) continuous
     try { await state.videoTrack.applyConstraints({ advanced: [{ whiteBalanceMode: 'continuous' }] }); } catch {}
+    try { await state.videoTrack.applyConstraints({ advanced: [{ colorTemperature: state.fx.wbTemp }] }); } catch {}
+    // 3. Exposure — continuous auto with slight lift
     try { await state.videoTrack.applyConstraints({ advanced: [{ exposureMode: 'continuous' }] }); } catch {}
-    state.fx.beauty = 0; state.fx.lowlight = false;
-    state.fx.saturation = 1; state.fx.brightness = 1; state.fx.contrast = 1; state.fx.sharpness = 1;
-    toast('Studio Auto off — natural look');
+    try { await state.videoTrack.applyConstraints({ advanced: [{ exposureCompensation: state.fx.exposureComp }] }); } catch {}
+    // 4. Beauty / smooth skin — gentle
+    state.fx.beauty = 28;
+    // 5. Vibrant colour + slight brightness/contrast lift
+    state.fx.saturation = 1.18;
+    state.fx.brightness = 1.03;
+    state.fx.contrast = 1.05;
+    state.fx.sharpness = 1.03;
+    // 6. Lowlight auto-boost if sensor is dim (handled in drawFrame via saturation/brightness)
+    refreshOutbound();
     sendState(true);
-    return;
+  } catch (e) {
+    // Studio Auto must NEVER break camera startup
+    console.warn('Studio Auto failed:', e);
+    toast('Pro settings ready — camera active');
+    sendState(true);
   }
-  toast('⭐ Studio Auto ON — pro photo quality');
-  // 1. Best resolution
-  await pickBestResolution();
-  await startCapture(state.currentDeviceId ? { deviceId: { exact: state.currentDeviceId } } : { facingMode: state.facing });
-  // 2. White balance — daylight studio (5500K) continuous
-  try { await state.videoTrack.applyConstraints({ advanced: [{ whiteBalanceMode: 'continuous' }] }); } catch {}
-  try { await state.videoTrack.applyConstraints({ advanced: [{ colorTemperature: state.fx.wbTemp }] }); } catch {}
-  // 3. Exposure — continuous auto with slight lift
-  try { await state.videoTrack.applyConstraints({ advanced: [{ exposureMode: 'continuous' }] }); } catch {}
-  try { await state.videoTrack.applyConstraints({ advanced: [{ exposureCompensation: state.fx.exposureComp }] }); } catch {}
-  // 4. Beauty / smooth skin — gentle
-  state.fx.beauty = 28;
-  // 5. Vibrant colour + slight brightness/contrast lift
-  state.fx.saturation = 1.18;
-  state.fx.brightness = 1.03;
-  state.fx.contrast = 1.05;
-  state.fx.sharpness = 1.03;
-  // 6. Lowlight auto-boost if sensor is dim (handled in drawFrame via saturation/brightness)
-  refreshOutbound();
-  sendState(true);
 }
 
 /* Studio Auto toggle from local button */
