@@ -160,7 +160,7 @@ const state = {
   fxStream: null, fxTrack: null, processing: false,
   pcs: new Map(),               // peerId -> RTCPeerConnection
   lenses: [], currentDeviceId: null, facing: 'environment',
-  want: { width: 1920, height: 1080, fps: 30 },
+  want: { width: 1280, height: 720, fps: 30 },        // default to 720p for cool, lag-free streaming
   fx: { beauty: 0, lowlight: false, bgblur: false, bgmode: 'off', bgPreset: 'office', bgstrength: 16, mirror: false, autoframe: false, ptz: { x: .5, y: .5, scale: 1 },
     /* --- Professional auto photo/editor settings --- */
     studioAuto: false,          // master "pro auto" toggle
@@ -180,6 +180,9 @@ const state = {
   seg: null, segMask: null, segBusy: false, segFailed: false,
   face: null, faceBusy: false, faceFailed: false, lastFaceAt: 0, bgImageCanvas: null,
   battery: null, lastBytes: 0, lastStatT: 0, outKbps: 0, outFps: 0,
+  thermalLevel: 0,      // 0=cool,1=warm,2=hot,3=critical
+  networkQuality: 'good',
+  targetFps: 30, currentFps: 0, lastFrameTime: 0,
   prompter: { text: '', playing: false, speed: 40, size: 21, offset: 0 },
   reconnectTimer: null,
 };
@@ -434,11 +437,29 @@ function tuneSender(sender) {
   try {
     const p = sender.getParameters();
     if (!p.encodings || !p.encodings.length) p.encodings = [{}];
-    const h = state.videoTrack?.getSettings?.().height || 1080;
-    p.encodings[0].maxBitrate = h >= 2000 ? 22_000_000 : h >= 1000 ? (state.want.fps > 30 ? 12_000_000 : 8_000_000) : 4_000_000;
-    p.encodings[0].maxFramerate = state.want.fps;
+    const h = state.videoTrack?.getSettings?.().height || 720;
+    const thermal = state.thermalLevel || 0;
+    const net = state.networkQuality || 'good';
+    // Aggressively lowered bitrates — phones overheat at 22Mbps/12Mbps
+    let maxKbps;
+    if (net === 'poor' || thermal >= 2) maxKbps = h >= 1000 ? 2500 : 1500;   // poor network / hot: very low bitrate
+    else if (net === 'degraded' || thermal === 1) maxKbps = h >= 1000 ? 4000 : 2500;
+    else maxKbps = h >= 1000 ? 6000 : 3500;                                   // good network / cool: moderate bitrate
+    p.encodings[0].maxBitrate = maxKbps * 1000;
+    p.encodings[0].maxFramerate = state.targetFps || 30;
+    // Keyframe interval: send keyframe every 2 seconds (reduces encoder load)
+    p.encodings[0].framerateScale = 1.0;
+    if (typeof p.encodings[0].scaleResolutionDownBy === 'undefined') {
+      p.encodings[0].scaleResolutionDownBy = 1.0;
+    }
     sender.setParameters(p).catch(() => {});
   } catch {}
+}
+function tuneSenderForAll() {
+  for (const pc of state.pcs.values()) {
+    const sender = videoSenderOf(pc);
+    if (sender) tuneSender(sender);
+  }
 }
 function updatePreviewChrome() {
   const front = state.facing === 'user';
@@ -452,11 +473,22 @@ function updatePreviewChrome() {
 }
 
 /* --------------------------------------------------------- render loop */
-let frameNo = 0;
+let frameNo = 0, wakeLock = null;
 function startRenderLoop() {
   const loop = () => {
     requestAnimationFrame(loop);
     frameNo++;
+    // ---- FPS throttle: skip frames to hit targetFps (reduces CPU/heat) ----
+    const now = performance.now();
+    const interval = 1000 / Math.max(1, state.targetFps || 30);
+    if (state.lastFrameTime && now - state.lastFrameTime < interval) return;
+    state.lastFrameTime = now;
+    // Measure actual FPS
+    if (!state._fpsLastT) state._fpsLastT = now;
+    state._fpsCount = (state._fpsCount || 0) + 1;
+    if (now - state._fpsLastT >= 1000) {
+      state.currentFps = state._fpsCount; state._fpsCount = 0; state._fpsLastT = now;
+    }
     if (state.fx.bgmode !== 'off' && !state.segFailed) runSegmentation();
     if (state.fx.autoframe && !state.faceFailed) runFaceDetection();
     if (!state.processing) return;
@@ -852,21 +884,27 @@ async function applyTorch(on) {
 }
 
 /* -------------------------------------------- professional studio auto */
-/* Picks the best resolution the device supports, prefers 4K for photo / 1080p for streaming. */
+/* Picks the best resolution the device supports — favors 720p/1080p for cool,
+   lag-free streaming. 4K only when explicitly requested (photo mode). */
 async function pickBestResolution() {
-  // Defensive: getCapabilities() may return undefined on some mobile browsers
   let caps = {};
   try { caps = state.videoTrack ? (state.videoTrack.getCapabilities?.() || {}) : {}; } catch { caps = {}; }
   const wCap = caps?.width, hCap = caps?.height, fCap = caps?.frameRate;
   const clamp = (v, c) => c ? Math.min(Math.max(v, c.min), c.max) : v;
-  let targetW = state.fx?.videoRes?.w || 1920, targetH = state.fx?.videoRes?.h || 1080, targetF = state.want?.fps || 30;
+  // Thermal-aware defaults: lower resolution when device is warm
+  const thermal = state.thermalLevel || 0;
+  let targetW = state.fx?.videoRes?.w || 1280, targetH = state.fx?.videoRes?.h || 720, targetF = state.want?.fps || 30;
   if (state.fx?.resolutionMode === 'photo') { targetW = state.fx.photoRes?.w || 3840; targetH = state.fx.photoRes?.h || 2160; }
   else if (state.fx?.resolutionMode === 'video') { targetW = state.fx.videoRes?.w || 1920; targetH = state.fx.videoRes?.h || 1080; }
-  else { // auto: prefer 4K if the device can do it, else 1080p
+  else { // auto: 720p default, 1080p only if device handles it well and not thermal
     if (wCap && hCap) {
+      const has1080 = wCap.max >= 1920 && hCap.max >= 1080;
       const has4k = wCap.max >= 3840 && hCap.max >= 2160;
-      targetW = has4k ? 3840 : (wCap.max >= 1920 ? 1920 : Math.min(1280, wCap.max));
-      targetH = has4k ? 2160 : (hCap.max >= 1080 ? 1080 : Math.min(720, hCap.max));
+      if (thermal >= 2) { targetW = 1280; targetH = 720; targetF = 24; }          // hot: 720p24
+      else if (thermal === 1) { targetW = 1280; targetH = 720; targetF = 30; }     // warm: 720p30
+      else if (has1080) { targetW = 1920; targetH = 1080; targetF = 30; }          // cool: 1080p30
+      else { targetW = 1280; targetH = 720; targetF = 30; }                        // fallback: 720p30
+      // Never default to 4K for streaming — it overheats phones
     }
   }
   if (state.want) { state.want.width = clamp(targetW, wCap); state.want.height = clamp(targetH, hCap); }
@@ -962,17 +1000,37 @@ async function collectStats() {
   if (!pc) { updateStatLine(); return; }
   try {
     const stats = await pc.getStats();
+    let totalBytes = 0, now = 0;
     stats.forEach(r => {
       if (r.type === 'outbound-rtp' && r.kind === 'video') {
-        const now = r.timestamp;
+        now = r.timestamp;
         if (state.lastStatT) {
           const dt = (now - state.lastStatT) / 1000;
-          if (dt > 0) state.outKbps = Math.round(((r.bytesSent - state.lastBytes) * 8) / dt / 1000);
+          if (dt > 0) {
+            totalBytes += (r.bytesSent - (state.lastBytes || 0)) * 8 / dt / 1000;
+          }
         }
-        state.lastBytes = r.bytesSent; state.lastStatT = now;
         if (r.framesPerSecond) state.outFps = Math.round(r.framesPerSecond);
       }
     });
+    if (now && state.lastStatT) {
+      state.lastBytes = 0; // recompute next tick from fresh stats
+      state.outKbps = Math.round(totalBytes);
+      state.lastStatT = now;
+    }
+    // ---- Adaptive quality: lower bitrate/fps when network is strained ----
+    const kbps = state.outKbps || 0;
+    if (kbps > 8000 && state.networkQuality === 'good') state.networkQuality = 'degraded';
+    else if (kbps > 12000) state.networkQuality = 'poor';
+    else if (kbps < 4000) state.networkQuality = 'good';
+    // Thermal: infer from FPS drop (device throttling itself)
+    if (state.currentFps && state.targetFps && state.currentFps < state.targetFps * 0.7) {
+      if (state.thermalLevel < 3) state.thermalLevel++;
+    } else if (state.thermalLevel > 0 && state.currentFps >= state.targetFps * 0.9) {
+      state.thermalLevel--;
+    }
+    // Re-tune sender when quality tier changes
+    tuneSenderForAll();
   } catch {}
   updateStatLine();
 }
@@ -995,7 +1053,16 @@ async function initBattery() {
   try {
     if (!navigator.getBattery) return;
     state.battery = await navigator.getBattery();
-    const upd = () => { $('#battLine').textContent = `${state.battery.charging ? '⚡' : '🔋'} ${Math.round(state.battery.level * 100)}%`; };
+    const upd = () => {
+      const level = Math.round(state.battery.level * 100);
+      $('#battLine').textContent = `${state.battery.charging ? '⚡' : '🔋'} ${level}%`;
+      // Battery-aware quality: reduce resolution/fps when battery low and not charging
+      if (!state.battery.charging) {
+        if (level < 20 && state.targetFps !== 20) { state.targetFps = 20; tuneSenderForAll(); toast('🔋 Low battery — power-saver mode (20fps)', 3000); }
+        else if (level < 40 && state.targetFps !== 24) { state.targetFps = 24; tuneSenderForAll(); }
+        else if (level >= 40 && state.targetFps !== 30) { state.targetFps = 30; tuneSenderForAll(); }
+      } else if (state.targetFps !== 30) { state.targetFps = 30; tuneSenderForAll(); }
+    };
     state.battery.addEventListener('levelchange', upd);
     state.battery.addEventListener('chargingchange', upd);
     upd();
@@ -1007,10 +1074,13 @@ async function requestWakeLock() {
 }
 
 /* ------------------------------------------------------------- local UI */
-function setDim(on) {
+async function setDim(on) {
   state.dim = on;
   $('#dimOverlay').classList.toggle('hidden', !on);
   syncLocalButtons();
+  // Battery-saver: release wake lock so screen can dim/sleep, reducing heat
+  if (on && wakeLock) { try { wakeLock.release(); wakeLock = null; } catch {} }
+  else if (!on && !wakeLock) { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {} }
 }
 function syncLocalButtons() {
   $('#torchBtn').classList.toggle('on', state.torch);
