@@ -502,10 +502,11 @@ function refreshControlPanel() {
   if (!lenses.length) {
     grid.innerHTML = `<button class="btn small" data-facing="environment">Back camera</button><button class="btn small" data-facing="user">Front camera</button>`;
   } else {
-    grid.innerHTML = lenses.map(l => `<button class="btn small ${l.deviceId === c.caps.currentDeviceId ? 'active' : ''}" data-device="${l.deviceId}">${escapeHtml(l.label)}</button>`).join('');
+    grid.innerHTML = lenses.map(l => `<button class="btn small ${l.deviceId === c.caps.currentDeviceId ? 'active' : ''}" data-device="${escapeHtml(l.deviceId)}" data-label="${escapeHtml(l.raw || l.label)}">${escapeHtml(l.label)}</button>`).join('');
   }
   grid.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
-    control(b.dataset.device ? { action: 'lens', deviceId: b.dataset.device } : { action: 'lens', facing: b.dataset.facing });
+    // Send the lens label too — lets the phone re-resolve a stale deviceId by name instead of failing silently.
+    control(b.dataset.device ? { action: 'lens', deviceId: b.dataset.device, label: b.dataset.label || b.textContent } : { action: 'lens', facing: b.dataset.facing });
     grid.querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
   }));
 

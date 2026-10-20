@@ -28,6 +28,28 @@ AirStudio — Phone-as-4K-Studio-Webcam software. Node.js + WebRTC server with w
 - `index.js`: listens on `handleRequest.server` (the WS-attached server) instead of creating a new server
 - Verified locally: `node index.js` (Render path) and `node server.js` (standalone path) both pass a 5-step WS test (`test-ws.js`: connect → join/welcome → camera join → peer-joined → relay delivery); `require('./server.js')` without listening (Vercel path) returns a function handler + non-listening server
 
+### 1c. Camera UX Fixes — Landscape View + Lens/Front-Camera Swap
+**Problem A:** "Landscape view is not activated" — the codebase contained **zero** orientation/fullscreen code (no `requestFullscreen`, no `screen.orientation.lock`), so the phone never rotated to landscape even with auto-rotate off.
+**Fix A (`camera.html`):**
+- New ⛶ botbar button + `enterLandscape()/exitLandscape()/syncLandscape()`; auto-invoked on **Start Camera** (while the click is still a user gesture)
+- Android Chrome: `documentElement.requestFullscreen()` + `screen.orientation.lock('landscape')` → true native landscape; the orientation lock is demoted if fullscreen exits (`fullscreenchange` re-syncs)
+- iOS Safari / no-lock-API fallback: `body.force-landscape #camScreen` CSS rule rotates the whole camera UI 90° (`rotate(90deg)` sized `100dvh × 100dvw` at `left:100dvw`) — only applied while actually portrait; removed on orientation change or ⛶ toggle; landscape layout works even with device auto-rotate OFF
+- `.botbar` now `flex-wrap` (8 buttons fit small phones); disconnect runs `exitLandscape()` before reload
+
+**Problem B:** "Front camera is not swapping" — three compounding bugs:
+1. `startCapture()` **stopped the old video track before** `refreshOutbound()` ran `replaceTrack()`, and the sender lookup (`s.track && kind==='video'`) fails when `sender.track` is already `null` after `stop()` → the Studio view never switched (only the phone's local preview did)
+2. Studio sent a raw `deviceId` with no label; a stale ID → `OverconstrainedError` silently swallowed by `onControl`'s `console.warn`
+3. Flip/front-back switching relied solely on `facingMode`, which iOS Safari ignores, and `state.facing` was read from `getSettings().facingMode` (often undefined there) — flip errors were also unhandled
+
+**Fix B:**
+- `camera.html`: stores `pc._vSender` per peer + `videoSenderOf()` helper (tolerates `track === null`); `startCapture()` now does **replaceTrack → then stop old track** (renegotiates via offer if a peer has no video sender yet)
+- `pickDeviceByHint()`: resolves `'user'/'environment'` or a lens label (`Front`, `Back · Ultra-Wide…`) to an exact `deviceId` by label match → works where `facingMode` is unsupported; `resolveVideoOpts()` prefers label-resolved IDs over `facingMode`
+- Stale-ID retry: exact-`deviceId` failure re-resolves by label hint, then falls back without the constraint — never a silent no-op
+- `state.facing` resolved from `getSettings().facingMode` → device label → requested hint → previous value (correct mirroring on iOS)
+- Lens switch now toasts `Switching lens…` → `Lens switched ✓` / `⚠️ Lens switch failed (name)`; flip button catches errors with a toast
+- `studio.html`: lens buttons send `label` (raw/friendly, HTML-escaped) alongside `deviceId` so the phone can re-resolve stale IDs by name; verified: `node index.js` boots, `/api/health` ok, `/camera` 200, all inline `<script>` blocks pass syntax check
+- **Status:** Committed for Render auto-deploy; needs on-device verification (rotate phone → landscape engages; Studio lens/flip buttons switch front camera and program view follows)
+
 ### 2. Vercel Serverless Deployment
 **Problem:** Vercel requires serverless handler export, not `server.listen()`.
 **Fix:**

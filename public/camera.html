@@ -33,6 +33,7 @@
   .botbar {
     position: absolute; bottom: 0; left: 0; right: 0; z-index: 5;
     display: flex; align-items: center; justify-content: center; gap: 12px;
+    flex-wrap: wrap; row-gap: 6px;
     padding: 26px 12px calc(14px + env(safe-area-inset-bottom));
     background: linear-gradient(0deg, rgba(0,0,0,.65), transparent);
   }
@@ -65,6 +66,18 @@
     max-width: 86vw; text-align: center;
   }
   #toast.show { opacity: 1; }
+
+  /* --- forced landscape fallback (iOS Safari & any browser without
+     screen.orientation.lock): rotate the whole camera UI 90° so the
+     preview/controls are usable in landscape even with auto-rotate off. --- */
+  body.force-landscape #camScreen {
+    position: fixed; top: 0; left: 100vw; right: auto; bottom: auto;
+    width: 100vh; height: 100vw;
+    transform: rotate(90deg); transform-origin: 0 0;
+  }
+  @supports (height: 100dvh) {
+    body.force-landscape #camScreen { width: 100dvh; height: 100dvw; left: 100dvw; }
+  }
 </style>
 </head>
 <body>
@@ -110,6 +123,7 @@
     <button class="round-btn" id="torchBtn" title="Torch">🔦</button>
     <button class="round-btn" id="micBtn" title="Microphone">🎙️</button>
     <button class="round-btn" id="dimBtn" title="Battery saver">🌙</button>
+    <button class="round-btn" id="rotBtn" title="Landscape view">⛶</button>
     <button class="round-btn" id="leaveBtn" title="Disconnect" style="border-color:#7f1d2d;background:rgba(60,10,20,.6)">✕</button>
   </div>
 
@@ -181,9 +195,11 @@ async function join() {
   if (code.length < 4) { $('#joinError').textContent = 'Enter the 6-character pairing code from the Studio.'; return; }
   $('#joinError').textContent = '';
   $('#joinBtn').disabled = true; $('#joinBtn').textContent = 'Starting camera…';
+  await enterLandscape(); // best-effort fullscreen + landscape lock while the click is still a user gesture
   try {
     await startCapture({ facingMode: 'environment' });
   } catch (e) {
+    await exitLandscape();
     $('#joinBtn').disabled = false; $('#joinBtn').textContent = '📷 Start Camera';
     $('#joinError').textContent = 'Camera access failed: ' + (e.message || e.name) + '. Allow camera permission and retry.';
     return;
@@ -200,21 +216,82 @@ async function join() {
 }
 
 /* -------------------------------------------------------------- capture */
-async function startCapture(videoOpts) {
+async function pickDeviceByHint(hint) {
+  // Resolve a facing mode ('user'/'environment') or a lens label
+  // (e.g. 'Front', 'Back · Ultra-Wide 0.5×') to a concrete deviceId by
+  // matching device labels. Browsers that ignore facingMode (iOS Safari)
+  // can still switch lenses this way.
+  if (!hint) return null;
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput' && d.label);
+    if (!devs.length) return null;
+    const h = String(hint);
+    if (hint === 'user' || /front|user|selfie/i.test(h)) {
+      return devs.find(d => /front|user|selfie/i.test(d.label)) || null;
+    }
+    const word = h.match(/ultra|tele|macro/i);
+    if (word) {
+      const re = new RegExp(word[0], 'i');
+      const hit = devs.find(d => re.test(d.label) && /back|rear|environment|main/i.test(d.label));
+      if (hit) return hit;
+    }
+    if (hint === 'environment' || /back|rear|environment|main/i.test(h)) {
+      return devs.find(d => /back|rear|environment|main/i.test(d.label)) || null;
+    }
+  } catch {}
+  return null;
+}
+function lensHintForCurrent() {
+  const l = state.lenses.find(x => x.deviceId === state.currentDeviceId);
+  return l ? (l.raw || l.label) : (state.facing || '');
+}
+async function resolveVideoOpts(videoOpts) {
+  const o = { ...videoOpts };
+  if (!o.deviceId && o.facingMode) {
+    // Prefer an exact label-resolved deviceId over facingMode — works even
+    // where facingMode constraints are unsupported or ignored.
+    const dev = await pickDeviceByHint(o.facingMode);
+    if (dev) { o.deviceId = { exact: dev.deviceId }; delete o.facingMode; }
+  }
+  return o;
+}
+async function startCapture(videoOpts, labelHint) {
+  const opts = await resolveVideoOpts(videoOpts || {});
+  const hint = labelHint || lensHintForCurrent();
   const constraints = {
     video: {
       width: { ideal: state.want.width }, height: { ideal: state.want.height },
       frameRate: { ideal: state.want.fps },
-      ...videoOpts,
+      ...opts,
     },
     audio: state.audioTrack
       ? false
       : (state.micOn ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true } : false),
   };
-  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+  } catch (e) {
+    // A stale exact deviceId (e.g. sent from the Studio's cached lens list)
+    // must not block a lens switch — re-resolve by label, then last-resort
+    // without the deviceId constraint.
+    if (!opts.deviceId) throw e;
+    const dev = await pickDeviceByHint(hint);
+    if (dev && dev.deviceId !== opts.deviceId.exact) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ ...constraints, video: { ...constraints.video, deviceId: { exact: dev.deviceId } } });
+      } catch { stream = null; }
+    }
+    if (!stream) {
+      const retryVideo = { ...constraints.video };
+      delete retryVideo.deviceId;
+      stream = await navigator.mediaDevices.getUserMedia({ ...constraints, video: retryVideo });
+    }
+  }
   const newVideo = stream.getVideoTracks()[0];
+  const oldVideo = state.videoTrack;
   if (!state.rawStream) state.rawStream = new MediaStream();
-  if (state.videoTrack) { state.rawStream.removeTrack(state.videoTrack); state.videoTrack.stop(); }
+  if (oldVideo) state.rawStream.removeTrack(oldVideo);
   state.videoTrack = newVideo;
   state.rawStream.addTrack(newVideo);
   if (!state.audioTrack && stream.getAudioTracks()[0]) {
@@ -225,7 +302,31 @@ async function startCapture(videoOpts) {
   await rawVideo.play().catch(() => {});
   const s = newVideo.getSettings();
   state.currentDeviceId = s.deviceId || state.currentDeviceId;
-  state.facing = s.facingMode || state.facing;
+  const lbl = newVideo.label || '';
+  state.facing = s.facingMode
+    || (/front|user|selfie/i.test(lbl) ? 'user'
+      : /back|rear|environment|main/i.test(lbl) ? 'environment'
+      : opts.facingMode || state.facing);
+  // Swap the live WebRTC senders to the new track BEFORE stopping the old
+  // one — stopping first can null out sender.track (browser-dependent) and
+  // then replaceTrack never runs, so the Studio view never switches.
+  const outbound = outboundVideoTrack();
+  for (const [pid, pc] of state.pcs.entries()) {
+    const sender = videoSenderOf(pc);
+    if (sender) {
+      if (sender.track !== outbound) sender.replaceTrack(outbound).catch(() => {});
+      tuneSender(sender);
+    } else if (outbound) {
+      try {
+        const sn = pc.addTrack(outbound, state.rawStream);
+        pc._vSender = sn; tuneSender(sn);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        relay(pid, 'signal', { sdp: pc.localDescription });
+      } catch {}
+    }
+  }
+  if (oldVideo && oldVideo !== newVideo) { try { oldVideo.stop(); } catch {} }
   await refreshLenses();
   refreshOutbound();
   updatePreviewChrome();
@@ -288,6 +389,13 @@ function outboundVideoTrack() {
   if (state.processing && state.fxTrack) return state.fxTrack;
   return state.videoTrack;
 }
+function videoSenderOf(pc) {
+  // sender.track can be null once the old track was stopped — the stored
+  // reference is still our video sender.
+  const held = pc._vSender;
+  if (held && (!held.track || held.track.kind === 'video')) return held;
+  return pc.getSenders().find(x => x.track && x.track.kind === 'video') || null;
+}
 function refreshOutbound() {
   const wantFx = processingNeeded() && typeof fxCanvas.captureStream === 'function';
   if (wantFx && !state.fxStream) {
@@ -298,7 +406,7 @@ function refreshOutbound() {
   state.processing = wantFx;
   const track = outboundVideoTrack();
   for (const pc of state.pcs.values()) {
-    const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+    const sender = videoSenderOf(pc);
     if (sender && track && sender.track !== track) sender.replaceTrack(track).catch(() => {});
     if (sender) tuneSender(sender);
   }
@@ -586,7 +694,7 @@ async function makePeer(peerId) {
   const pc = new RTCPeerConnection(ICE);
   state.pcs.set(peerId, pc);
   const vt = outboundVideoTrack();
-  if (vt) { const s = pc.addTrack(vt, state.rawStream); tuneSender(s); }
+  if (vt) { const s = pc.addTrack(vt, state.rawStream); pc._vSender = s; tuneSender(s); }
   if (state.audioTrack) pc.addTrack(state.audioTrack, state.rawStream);
   pc.onicecandidate = e => { if (e.candidate) relay(peerId, 'signal', { candidate: e.candidate }); };
   pc.onconnectionstatechange = () => {
@@ -623,7 +731,10 @@ async function onControl(d) {
     switch (d.action) {
       case 'lens':
         toast('Switching lens…');
-        await startCapture(d.deviceId ? { deviceId: { exact: d.deviceId } } : { facingMode: d.facing || 'environment' });
+        try {
+          await startCapture(d.deviceId ? { deviceId: { exact: d.deviceId } } : { facingMode: d.facing || 'environment' }, d.label || d.facing || '');
+          toast('Lens switched ✓', 1500);
+        } catch (e) { toast('⚠️ Lens switch failed (' + (e.name || e.message || 'error') + ')', 4000); }
         break;
       case 'resolution':
         state.want.width = d.width; state.want.height = d.height;
@@ -777,8 +888,10 @@ function syncLocalButtons() {
 }
 $('#flipBtn').addEventListener('click', async () => {
   const next = state.facing === 'user' ? 'environment' : 'user';
-  await startCapture({ facingMode: next });
-  sendState(true);
+  try {
+    await startCapture({ facingMode: next }, next);
+    sendState(true);
+  } catch (e) { toast('⚠️ Could not switch camera (' + (e.name || 'error') + ')', 3600); }
 });
 $('#torchBtn').addEventListener('click', () => { state.torch = !state.torch; applyTorch(state.torch); sendState(true); });
 $('#micBtn').addEventListener('click', async () => {
@@ -804,6 +917,43 @@ $('#micBtn').addEventListener('click', async () => {
 });
 $('#dimBtn').addEventListener('click', () => { setDim(true); sendState(true); });
 $('#dimOverlay').addEventListener('click', () => { setDim(false); sendState(true); });
+
+/* --- landscape view: fullscreen + orientation lock (Android Chrome),
+       CSS 90° rotation fallback (iOS Safari / no lock API) --- */
+let landscapeOn = false, nativeLandscape = false;
+function syncLandscape() {
+  const portrait = matchMedia('(orientation: portrait)').matches;
+  document.body.classList.toggle('force-landscape', landscapeOn && portrait && !nativeLandscape);
+}
+async function enterLandscape() {
+  landscapeOn = true;
+  nativeLandscape = false;
+  $('#rotBtn').classList.add('on');
+  try {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+  } catch {}
+  try {
+    if (screen.orientation && screen.orientation.lock) { await screen.orientation.lock('landscape'); nativeLandscape = true; }
+  } catch { nativeLandscape = false; }
+  syncLandscape();
+  toast(nativeLandscape ? '🖥️ Landscape view ON' : '🖥️ Landscape layout ON — hold the phone sideways', 3000);
+}
+async function exitLandscape() {
+  landscapeOn = false;
+  nativeLandscape = false;
+  $('#rotBtn').classList.remove('on');
+  document.body.classList.remove('force-landscape');
+  try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch {}
+  try { if (document.fullscreenElement) await document.exitFullscreen(); } catch {}
+}
+$('#rotBtn').addEventListener('click', () => { landscapeOn ? exitLandscape() : enterLandscape(); });
+// Chrome releases the orientation lock with fullscreen — demote to CSS fallback.
+document.addEventListener('fullscreenchange', () => {
+  if (landscapeOn && !document.fullscreenElement) nativeLandscape = false;
+  syncLandscape();
+});
+if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', syncLandscape);
+window.addEventListener('resize', syncLandscape);
 
 /* --- local zoom controls --- */
 function applyZoom() {
@@ -847,7 +997,7 @@ function touchDist(touches) {
   const dy = touches[0].clientY - touches[1].clientY;
   return Math.hypot(dx, dy);
 }
-$('#leaveBtn').addEventListener('click', () => location.reload());
+$('#leaveBtn').addEventListener('click', () => { exitLandscape(); location.reload(); });
 navigator.mediaDevices?.addEventListener?.('devicechange', () => { refreshLenses().then(publishCaps); });
 syncLocalButtons();
 </script>
