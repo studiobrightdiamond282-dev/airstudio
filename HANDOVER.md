@@ -85,7 +85,14 @@ AirStudio — Phone-as-4K-Studio-Webcam software. Node.js + WebRTC server with w
 - `camera.html`: Zoom level stored in `state.fx.ptz.scale` and synced via `sendState()`
 - **Effect:** Phone user can zoom with buttons or two-finger pinch gesture during livestreaming
 
-### 6. Paystack Production Setup (PENDING)
+### 6. vMix Output Fix — Cameras Already in Room Not Displaying (FIXED + DEPLOYED)
+**Problem:** vMix Browser input loading `/output?code=X` showed only "Waiting for camera..." even when a phone camera was already streaming in the same room.
+**Root cause:** `output.html` ignored the `welcome` message's `peers` array — it only created WebRTC peer connections for cameras joining *after* the output page loaded. Cameras already in the room were never offered a connection, so no video track ever arrived.
+**Fix (`public/output.html`):** On the `welcome` message, iterate `m.peers` and create an `RTCPeerConnection` (with `onicecandidate` + `ontrack` handlers) for every camera already in the room, so output is ready to receive the camera's WebRTC offer immediately.
+**Verification:** Local server + WS test passed (14/14 tests incl. HTTP routes + signaling relay).
+**Status:** Committed `8ccef18` and pushed to `main`; Render auto-deploy ON COMMIT → live at `https://airstudio.onrender.com`.
+
+### 7. Paystack Production Setup (PENDING)
 **Current state:** Paystack env vars are set in Render (`PAYSTACK_SECRET_KEY`, `PAYSTACK_PUBLIC_KEY`, prices, `BASE_URL`), `NODE_ENV=production` is set.
 **Plan:** Test live Paystack checkout → webhook key issuance flow end-to-end.
 
