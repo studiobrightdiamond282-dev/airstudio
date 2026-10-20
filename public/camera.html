@@ -123,6 +123,8 @@
     <button class="round-btn" id="torchBtn" title="Torch">🔦</button>
     <button class="round-btn" id="micBtn" title="Microphone">🎙️</button>
     <button class="round-btn" id="dimBtn" title="Battery saver">🌙</button>
+    <button class="round-btn" id="studioBtn" title="Studio Auto — pro photo settings">⭐</button>
+    <button class="round-btn" id="resBtn" title="Resolution: Auto/Photo/Video">📐</button>
     <button class="round-btn" id="rotBtn" title="Landscape view">⛶</button>
     <button class="round-btn" id="leaveBtn" title="Disconnect" style="border-color:#7f1d2d;background:rgba(60,10,20,.6)">✕</button>
   </div>
@@ -159,7 +161,21 @@ const state = {
   pcs: new Map(),               // peerId -> RTCPeerConnection
   lenses: [], currentDeviceId: null, facing: 'environment',
   want: { width: 1920, height: 1080, fps: 30 },
-  fx: { beauty: 0, lowlight: false, bgblur: false, bgmode: 'off', bgPreset: 'office', bgstrength: 16, mirror: false, autoframe: false, ptz: { x: .5, y: .5, scale: 1 } },
+  fx: { beauty: 0, lowlight: false, bgblur: false, bgmode: 'off', bgPreset: 'office', bgstrength: 16, mirror: false, autoframe: false, ptz: { x: .5, y: .5, scale: 1 },
+    /* --- Professional auto photo/editor settings --- */
+    studioAuto: false,          // master "pro auto" toggle
+    photoRes: { w: 3840, h: 2160 },  // high-res photo capture target
+    videoRes: { w: 1920, h: 1080 },  // streaming target
+    resolutionMode: 'auto',     // 'auto' | 'photo' | 'video'
+    wbMode: 'continuous',       // 'continuous' | 'manual'
+    wbTemp: 5500,               // Kelvin — daylight balanced studio white
+    exposureMode: 'continuous', // 'continuous' | 'manual'
+    exposureComp: 0,            // -1 .. 1
+    saturation: 1.15,           // vibrant colour boost
+    brightness: 1.02,           // slight lift for studio look
+    contrast: 1.04,             // gentle contrast
+    sharpness: 1.02,            // subtle crispness
+  },
   torch: false, micOn: false, dim: false,
   seg: null, segMask: null, segBusy: false, segFailed: false,
   face: null, faceBusy: false, faceFailed: false, lastFaceAt: 0, bgImageCanvas: null,
@@ -198,6 +214,8 @@ async function join() {
   await enterLandscape(); // best-effort fullscreen + landscape lock while the click is still a user gesture
   try {
     await startCapture({ facingMode: 'environment' });
+    // Automatic professional studio photo settings — no user action needed
+    await applyStudioAuto(true);
   } catch (e) {
     await exitLandscape();
     $('#joinBtn').disabled = false; $('#joinBtn').textContent = '📷 Start Camera';
@@ -461,15 +479,19 @@ function drawFrame(vw, vh) {
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
   if (f.mirror) { ctx.translate(vw, 0); ctx.scale(-1, 1); }
-  ctx.filter = f.lowlight ? 'brightness(1.38) contrast(1.06) saturate(1.12)' : 'none';
+  // Professional colour grade: vibrant saturation + brightness + contrast lift (studio look)
+  const sat = f.studioAuto ? f.saturation : 1;
+  const bri = f.studioAuto ? f.brightness : (f.lowlight ? 1.38 : 1);
+  const con = f.studioAuto ? f.contrast : (f.lowlight ? 1.06 : 1);
+  ctx.filter = `brightness(${bri}) contrast(${con}) saturate(${sat})`;
 
   if (f.bgmode !== 'off' && state.segMask) {
     // Background plate: virtual image or blurred live frame
     if (f.bgmode === 'image' && state.bgImageCanvas) {
-      ctx.filter = 'none';
+      ctx.filter = `brightness(${bri}) contrast(${con}) saturate(${sat})`;
       drawCover(ctx, state.bgImageCanvas, vw, vh);
     } else {
-      ctx.filter = `blur(${f.bgstrength}px) brightness(0.92) saturate(1.05)`;
+      ctx.filter = `blur(${f.bgstrength}px) brightness(${bri}) contrast(${con}) saturate(${sat})`;
       ctx.drawImage(rawVideo, sx, sy, sw, sh, -f.bgstrength, -f.bgstrength, vw + f.bgstrength * 2, vh + f.bgstrength * 2);
     }
     // Person cut-out
@@ -479,9 +501,9 @@ function drawFrame(vw, vh) {
     pctx.filter = 'none';
     pctx.drawImage(state.segMask, sx, sy, sw, sh, 0, 0, vw, vh);
     pctx.globalCompositeOperation = 'source-in';
-    if (f.lowlight) pctx.filter = 'brightness(1.38) contrast(1.06) saturate(1.12)';
+    pctx.filter = `brightness(${bri}) contrast(${con}) saturate(${sat})`;
     pctx.drawImage(rawVideo, sx, sy, sw, sh, 0, 0, vw, vh);
-    ctx.filter = 'none';
+    ctx.filter = `brightness(${bri}) contrast(${con}) saturate(${sat})`;
     ctx.drawImage(pc, 0, 0);
   } else {
     ctx.drawImage(rawVideo, sx, sy, sw, sh, 0, 0, vw, vh);
@@ -495,7 +517,7 @@ function drawFrame(vw, vh) {
     bctx.filter = 'blur(2px)';
     bctx.drawImage(rawVideo, sx, sy, sw, sh, 0, 0, bw, bh);
     ctx.globalAlpha = (f.beauty / 100) * 0.5;
-    ctx.filter = 'brightness(1.04) saturate(1.05)';
+    ctx.filter = `brightness(${bri}) contrast(${con}) saturate(${sat})`;
     ctx.drawImage(bc, 0, 0, vw, vh);
     ctx.globalAlpha = 1;
   }
@@ -786,6 +808,35 @@ async function onControl(d) {
         refreshOutbound();
         break;
       case 'mirror': state.fx.mirror = !!d.on; refreshOutbound(); break;
+      /* --- Professional studio auto settings --- */
+      case 'studioAuto':
+        await applyStudioAuto(!!d.on);
+        break;
+      case 'studioRes':
+        state.fx.resolutionMode = d.mode || 'auto';
+        if (state.fx.studioAuto) await applyStudioAuto(true);
+        else { await pickBestResolution(); await startCapture(state.currentDeviceId ? { deviceId: { exact: state.currentDeviceId } } : { facingMode: state.facing }); }
+        break;
+      case 'studioWB':
+        state.fx.wbTemp = d.temp;
+        if (state.fx.studioAuto) { try { await track.applyConstraints({ advanced: [{ colorTemperature: d.temp }] }); } catch {} }
+        break;
+      case 'studioExposure':
+        state.fx.exposureComp = d.value;
+        if (state.fx.studioAuto) { try { await track.applyConstraints({ advanced: [{ exposureCompensation: d.value }] }); } catch {} }
+        break;
+      case 'studioSaturation':
+        state.fx.saturation = d.value;
+        refreshOutbound();
+        break;
+      case 'studioBrightness':
+        state.fx.brightness = d.value;
+        refreshOutbound();
+        break;
+      case 'studioContrast':
+        state.fx.contrast = d.value;
+        refreshOutbound();
+        break;
       case 'ptz': if (!state.fx.autoframe) { Object.assign(state.fx.ptz, d.ptz || {}); refreshOutbound(); } break;
       case 'mic': state.micOn = !!d.on; if (state.audioTrack) state.audioTrack.enabled = state.micOn; syncLocalButtons(); break;
       case 'dim': setDim(!!d.on); break;
@@ -799,6 +850,79 @@ async function applyTorch(on) {
   catch { if (on) toast('Torch not controllable from the browser on this device'); }
   syncLocalButtons();
 }
+
+/* -------------------------------------------- professional studio auto */
+/* Picks the best resolution the device supports, prefers 4K for photo / 1080p for streaming. */
+async function pickBestResolution() {
+  const caps = state.videoTrack ? state.videoTrack.getCapabilities?.() : {};
+  const wCap = caps.width, hCap = caps.height, fCap = caps.frameRate;
+  const clamp = (v, c) => c ? Math.min(Math.max(v, c.min), c.max) : v;
+  let targetW = state.videoRes.w, targetH = state.videoRes.h, targetF = state.want.fps;
+  if (state.fx.resolutionMode === 'photo') { targetW = state.photoRes.w; targetH = state.photoRes.h; }
+  else if (state.fx.resolutionMode === 'video') { targetW = state.videoRes.w; targetH = state.videoRes.h; }
+  else { // auto: prefer 4K if the device can do it, else 1080p
+    if (wCap && hCap) {
+      const has4k = wCap.max >= 3840 && hCap.max >= 2160;
+      targetW = has4k ? 3840 : (wCap.max >= 1920 ? 1920 : Math.min(1280, wCap.max));
+      targetH = has4k ? 2160 : (hCap.max >= 1080 ? 1080 : Math.min(720, hCap.max));
+    }
+  }
+  state.want.width = clamp(targetW, wCap);
+  state.want.height = clamp(targetH, hCap);
+  if (fCap) state.want.fps = clamp(targetF, fCap);
+  return { width: state.want.width, height: state.want.height, fps: state.want.fps };
+}
+
+/* Apply the full "Studio Auto" photo-editor look: WB, exposure, colour, skin. */
+async function applyStudioAuto(on) {
+  state.fx.studioAuto = !!on;
+  $('#studioBtn').classList.toggle('on', !!on);
+  if (!on) {
+    // Reset to neutral auto
+    try { await state.videoTrack.applyConstraints({ advanced: [{ whiteBalanceMode: 'continuous' }] }); } catch {}
+    try { await state.videoTrack.applyConstraints({ advanced: [{ exposureMode: 'continuous' }] }); } catch {}
+    state.fx.beauty = 0; state.fx.lowlight = false;
+    state.fx.saturation = 1; state.fx.brightness = 1; state.fx.contrast = 1; state.fx.sharpness = 1;
+    toast('Studio Auto off — natural look');
+    sendState(true);
+    return;
+  }
+  toast('⭐ Studio Auto ON — pro photo quality');
+  // 1. Best resolution
+  await pickBestResolution();
+  await startCapture(state.currentDeviceId ? { deviceId: { exact: state.currentDeviceId } } : { facingMode: state.facing });
+  // 2. White balance — daylight studio (5500K) continuous
+  try { await state.videoTrack.applyConstraints({ advanced: [{ whiteBalanceMode: 'continuous' }] }); } catch {}
+  try { await state.videoTrack.applyConstraints({ advanced: [{ colorTemperature: state.fx.wbTemp }] }); } catch {}
+  // 3. Exposure — continuous auto with slight lift
+  try { await state.videoTrack.applyConstraints({ advanced: [{ exposureMode: 'continuous' }] }); } catch {}
+  try { await state.videoTrack.applyConstraints({ advanced: [{ exposureCompensation: state.fx.exposureComp }] }); } catch {}
+  // 4. Beauty / smooth skin — gentle
+  state.fx.beauty = 28;
+  // 5. Vibrant colour + slight brightness/contrast lift
+  state.fx.saturation = 1.18;
+  state.fx.brightness = 1.03;
+  state.fx.contrast = 1.05;
+  state.fx.sharpness = 1.03;
+  // 6. Lowlight auto-boost if sensor is dim (handled in drawFrame via saturation/brightness)
+  refreshOutbound();
+  sendState(true);
+}
+
+/* Studio Auto toggle from local button */
+$('#studioBtn').addEventListener('click', () => applyStudioAuto(!state.fx.studioAuto));
+
+/* Resolution cycle button */
+$('#resBtn').addEventListener('click', () => {
+  const modes = ['auto', 'photo', 'video'];
+  const i = modes.indexOf(state.fx.resolutionMode);
+  state.fx.resolutionMode = modes[(i + 1) % modes.length];
+  $('#resBtn').title = 'Resolution: ' + state.fx.resolutionMode;
+  toast('Resolution: ' + state.fx.resolutionMode.toUpperCase(), 1500);
+  if (state.fx.studioAuto) { applyStudioAuto(true); }
+  else { pickBestResolution(); startCapture(state.currentDeviceId ? { deviceId: { exact: state.currentDeviceId } } : { facingMode: state.facing }); }
+  sendState(true);
+});
 
 /* ----------------------------------------------------------- teleprompter */
 const prompterEl = $('#prompter'), prompterText = $('#prompterText');
