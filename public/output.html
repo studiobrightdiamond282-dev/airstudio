@@ -105,6 +105,20 @@ function openSocket(host) {
   ws.onclose = () => setTimeout(connect, 2000);
     ws.onmessage = async ev => {
       const m = JSON.parse(ev.data);
+      if (m.type === 'welcome') {
+        // Create peer connections for cameras already in the room so output
+        // can receive their video even if they joined before this page loaded.
+        for (const p of (m.peers || [])) {
+          if (p.role !== 'camera') continue;
+          trackPeer(p.id);
+          if (peers.has(p.id)) continue;
+          const pc = new RTCPeerConnection(ICE);
+          peers.set(p.id, { pc, stream: null });
+          pc.onicecandidate = e => { if (e.candidate) relay(p.id, 'signal', { candidate: e.candidate }); };
+          pc.ontrack = e => { peers.get(p.id).stream = e.streams[0] || new MediaStream([e.track]); showProgram(); };
+        }
+        showProgram();
+      }
       if (m.type === 'peer-joined') {
         trackPeer(m.peer.id);
       }
