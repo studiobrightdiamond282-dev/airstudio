@@ -298,20 +298,25 @@ wss.on('connection', (ws) => {
       const room = rooms.get(code);
 
       // Allow multiple cameras (Iriun-style: each camera is a separate source)
+      let camIp = '';
+      try {
+        const addr = ws._socket?.remoteAddress || ws.remoteAddress || '';
+        camIp = addr.replace('::ffff:', '');
+      } catch {}
       if (msg.role === 'camera') {
         const camCount = [...room.values()].filter(p => p.role === 'camera').length;
         // Auto-assign Camera N name if no custom name or default name
         if (!msg.name || msg.name === 'Device' || msg.name === 'Phone Camera') {
-          msg.name = `Camera ${camCount + 1}`;
+          msg.name = camIp ? `Camera ${camCount + 1} (${camIp})` : `Camera ${camCount + 1}`;
         } else if (/^camera\s*\d*$/i.test(msg.name) || msg.name.trim() === '') {
-          msg.name = `Camera ${camCount + 1}`;
+          msg.name = camIp ? `Camera ${camCount + 1} (${camIp})` : `Camera ${camCount + 1}`;
         }
       }
 
       me = {
         id: 'p' + (peerSeq++).toString(36) + Date.now().toString(36).slice(-3),
         role: ['studio', 'camera', 'output'].includes(msg.role) ? msg.role : 'camera',
-        name: String(msg.name || `Camera ${[...room.values()].filter(p => p.role === 'camera').length + 1}`).slice(0, 40),
+        name: String(msg.name || `Camera ${[...room.values()].filter(p => p.role === 'camera').length + 1}`).slice(0, 80),
         caps: msg.caps || null,
         room: code,
         ws,
