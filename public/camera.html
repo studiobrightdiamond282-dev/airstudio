@@ -77,6 +77,7 @@
       <h1>Air<span class="grad-text">Studio</span></h1>
     </div>
     <p>Turn this phone into a wireless studio camera. Enter the pairing code shown in the Studio on your PC — the video link is peer-to-peer and encrypted.</p>
+    <p style="font-size:12.5px;background:#141b36;border:1px solid var(--line);border-radius:10px;padding:9px 12px">🎙️ <b>Microphone is OFF by default.</b> Starting the camera requests video only — tap the 🎙️ button to enable phone audio for the program feed.</p>
     <label class="field">Camera name</label>
     <input id="nameInput" class="input" maxlength="30" autocomplete="off">
     <label class="field">Pairing code</label>
@@ -145,7 +146,7 @@ const state = {
   lenses: [], currentDeviceId: null, facing: 'environment',
   want: { width: 1920, height: 1080, fps: 30 },
   fx: { beauty: 0, lowlight: false, bgblur: false, bgmode: 'off', bgPreset: 'office', bgstrength: 16, mirror: false, autoframe: false, ptz: { x: .5, y: .5, scale: 1 } },
-  torch: false, micOn: true, dim: false,
+  torch: false, micOn: false, dim: false,
   seg: null, segMask: null, segBusy: false, segFailed: false,
   face: null, faceBusy: false, faceFailed: false, lastFaceAt: 0, bgImageCanvas: null,
   battery: null, lastBytes: 0, lastStatT: 0, outKbps: 0, outFps: 0,
@@ -206,7 +207,9 @@ async function startCapture(videoOpts) {
       frameRate: { ideal: state.want.fps },
       ...videoOpts,
     },
-    audio: state.audioTrack ? false : { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    audio: state.audioTrack
+      ? false
+      : (state.micOn ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true } : false),
   };
   const stream = await navigator.mediaDevices.getUserMedia(constraints);
   const newVideo = stream.getVideoTracks()[0];
@@ -521,11 +524,25 @@ function onFaceResults(r) {
 }
 
 /* -------------------------------------------------------------- WebRTC */
+/* Same SIGNAL_URL logic as Studio: static-only hosts advertise the persistent
+   WebSocket server via /api/config/public. */
+let SIGNAL_BASE = '';
+function wsUrl() {
+  return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${SIGNAL_BASE || location.host}`;
+}
+fetch('/api/config/public').then(r => r.json()).then(cfg => {
+  if (cfg && cfg.signalUrl) {
+    try { SIGNAL_BASE = new URL(cfg.signalUrl).host; } catch { SIGNAL_BASE = String(cfg.signalUrl).replace(/^wss?:\/\//, '').replace(/\/$/, ''); }
+  }
+}).catch(() => {});
+let wsAttempt = 0;
+const WS_DIAG = 'cam-' + Math.random().toString(36).slice(2, 8);
 function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}`);
+  clearTimeout(state.reconnectTimer);
+  const ws = new WebSocket(wsUrl());
   state.ws = ws;
   ws.onopen = () => {
+    wsAttempt = 0;
     ws.send(JSON.stringify({ type: 'join', room: state.room, role: 'camera', name: state.name }));
   };
   ws.onmessage = async ev => {
@@ -548,10 +565,14 @@ function connectWS() {
     }
   };
   ws.onclose = () => {
-    $('#liveChip').innerHTML = '<span class="dot"></span> RECONNECTING';
+    wsAttempt++;
+    const wait = Math.min(2500 * wsAttempt, 15000);
+    $('#liveChip').innerHTML = `<span class="dot"></span> RECONNECTING (try ${wsAttempt})`;
+    toast(`Signaling unreachable (try ${wsAttempt}, diag ${WS_DIAG}) — check the Studio is on the same signaling server, then retry.`, 4200);
     clearTimeout(state.reconnectTimer);
-    state.reconnectTimer = setTimeout(connectWS, 2500);
+    state.reconnectTimer = setTimeout(connectWS, wait);
   };
+  ws.onerror = () => { try { ws.close(); } catch {} };
 }
 function relay(to, kind, data) {
   if (state.ws?.readyState === 1) state.ws.send(JSON.stringify({ type: 'relay', to, kind, data }));
@@ -760,7 +781,27 @@ $('#flipBtn').addEventListener('click', async () => {
   sendState(true);
 });
 $('#torchBtn').addEventListener('click', () => { state.torch = !state.torch; applyTorch(state.torch); sendState(true); });
-$('#micBtn').addEventListener('click', () => { state.micOn = !state.micOn; if (state.audioTrack) state.audioTrack.enabled = state.micOn; syncLocalButtons(); sendState(true); });
+$('#micBtn').addEventListener('click', async () => {
+  state.micOn = !state.micOn;
+  if (state.micOn && !state.audioTrack) {
+    try {
+      const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      state.audioTrack = a.getAudioTracks()[0];
+      if (state.audioTrack) {
+        state.rawStream.addTrack(state.audioTrack);
+        for (const pc of state.pcs.values()) { try { pc.addTrack(state.audioTrack, state.rawStream); } catch {} }
+        toast('🎙️ Microphone ON — phone audio is now in the program feed');
+      }
+    } catch (e) {
+      state.micOn = false;
+      toast('Microphone permission denied — audio stays off', 3200);
+    }
+  } else if (state.audioTrack) {
+    state.audioTrack.enabled = state.micOn;
+    toast(state.micOn ? '🎙️ Microphone ON' : '🔇 Microphone OFF');
+  }
+  syncLocalButtons(); sendState(true);
+});
 $('#dimBtn').addEventListener('click', () => { setDim(true); sendState(true); });
 $('#dimOverlay').addEventListener('click', () => { setDim(false); sendState(true); });
 

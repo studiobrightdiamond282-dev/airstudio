@@ -1,5 +1,9 @@
 {
   "routes": [
+    { "src": "/api/(.*)", "dest": "/api/[[...path]]" },
+    { "src": "/studio", "dest": "/public/studio.html" },
+    { "src": "/camera", "dest": "/public/camera.html" },
+    { "src": "/output", "dest": "/public/output.html" },
     { "src": "/(.*)", "dest": "/public/$1" }
   ],
   "cleanUrls": true,

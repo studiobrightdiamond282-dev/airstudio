@@ -55,7 +55,15 @@ function showProgram() {
 
 function connect() {
   if (!ROOM) return;
-  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
+  // Same SIGNAL_URL logic as Studio/camera: static-only hosts advertise the
+  // persistent WebSocket server via /api/config/public.
+  fetch('/api/config/public').then(r => r.json()).then(cfg => {
+    openSocket(cfg && cfg.signalUrl ? hostOf(cfg.signalUrl) : location.host);
+  }).catch(() => openSocket(location.host));
+}
+function hostOf(u) { try { return new URL(u).host; } catch { return String(u).replace(/^wss?:\/\//, '').replace(/\/$/, ''); } }
+function openSocket(host) {
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${host}`);
   const relay = (to, kind, data) => ws.readyState === 1 && ws.send(JSON.stringify({ type: 'relay', to, kind, data }));
   ws.onopen = () => ws.send(JSON.stringify({ type: 'join', room: ROOM, role: 'output', name: 'Program Output' }));
   ws.onclose = () => setTimeout(connect, 2000);

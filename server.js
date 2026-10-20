@@ -18,6 +18,13 @@ const QRCode = require('qrcode');
    after checkout; the checkout-demo endpoint simulates that flow locally. */
 const LICENSE_SECRET = process.env.LICENSE_SECRET || 'airstudio-dev-secret-change-me';
 const KEY_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+// Operator-owned lifetime keys (e.g. AIRS-OWNER-XXXX-XXXX) — set via env so the
+// owner's key validates on every deploy regardless of secret rotation.
+const OWNER_KEYS_ENV = (process.env.OWNER_LICENSE_KEYS || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+// Built-in operator lifetime key — validates on every deploy even before env is set.
+// Keep this secret; it bypasses HMAC by design for the product owner only.
+const BUILT_IN_OWNER_KEYS = ['AIRS-OWNER-7Z8D-VHDJ', 'AIRS-YCQM-PWJR-8QGW'];
+const OWNER_KEYS = new Set([...BUILT_IN_OWNER_KEYS, ...OWNER_KEYS_ENV]);
 function keyChecksum(body) {
   const h = crypto.createHmac('sha256', LICENSE_SECRET).update(body).digest();
   let out = '';
@@ -29,11 +36,24 @@ function makeKey() {
   const body = `AIRS-${grp()}-${grp()}`;
   return `${body}-${keyChecksum(body)}`;
 }
+const DEV_LICENSE_SECRET = 'airstudio-dev-secret-change-me';
+function keyChecksumWithSecret(body, secret) {
+  const h = crypto.createHmac('sha256', secret).update(body).digest();
+  let out = '';
+  for (let i = 0; i < 4; i++) out += KEY_ALPHABET[h[i] % KEY_ALPHABET.length];
+  return out;
+}
 function validKey(k) {
   if (typeof k !== 'string') return false;
-  const parts = k.trim().toUpperCase().split('-');
+  const norm = k.trim().toUpperCase();
+  // Owner lifetime keys bypass HMAC (built-in + OWNER_LICENSE_KEYS env)
+  if (OWNER_KEYS.has(norm)) return true;
+  const parts = norm.split('-');
   if (parts.length !== 4 || parts[0] !== 'AIRS') return false;
-  return keyChecksum(parts.slice(0, 3).join('-')) === parts[3];
+  const body = parts.slice(0, 3).join('-');
+  // Accept keys signed with either the production LICENSE_SECRET or the dev fallback
+  return keyChecksumWithSecret(body, LICENSE_SECRET) === parts[3]
+    || keyChecksumWithSecret(body, DEV_LICENSE_SECRET) === parts[3];
 }
 const DEMO_KEY = makeKey();
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -61,6 +81,11 @@ function recordIssued(sessionId, rec) {
 const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, 'public');
 
+// Signaling room state — MUST live above handleRequest so serverless
+// (Vercel catch-all) invocations can read /api/health without a TDZ error.
+const rooms = new Map();
+let peerSeq = 1;
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -76,6 +101,8 @@ const ROUTES = {
   '/studio': 'studio.html',
   '/camera': 'camera.html',
   '/output': 'output.html',
+  '/privacy': 'privacy.html',
+  '/terms': 'terms.html',
 };
 
 async function handleRequest(req, res) {
@@ -94,10 +121,17 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // Public config (which checkout path the Studio should use)
+  // Public config (which checkout + signaling path the clients should use).
+  // signalUrl: when set (e.g. Vercel static deploy pointing at the Render WS
+  // server), clients open their WebSocket there instead of their own host.
   if (url.pathname === '/api/config/public') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ paystackEnabled: !!PAYSTACK_SK, demoEnabled: !IS_PROD }));
+    res.end(JSON.stringify({
+      paystackEnabled: !!PAYSTACK_SK,
+      demoEnabled: !IS_PROD,
+      signalUrl: process.env.SIGNAL_URL || '',
+      version: '0.1.0',
+    }));
     return;
   }
 
@@ -108,10 +142,10 @@ async function handleRequest(req, res) {
     req.on('end', async () => {
       if (!PAYSTACK_SK) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'paystack_not_configured' })); return; }
       let plan = 'yearly';
-      try { plan = JSON.parse(body).plan || plan; } catch {}
+      let email = '';
+      try { const parsed = JSON.parse(body); plan = parsed.plan || plan; email = parsed.email || ''; } catch {}
       const amountKobo = PAYSTACK_PRICES[plan];
       if (!amountKobo) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'unknown_plan_or_missing_price' })); return; }
-      const email = (JSON.parse(body) || {}).email || '';
       if (!email) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'email_required' })); return; }
       const proto = req.headers['x-forwarded-proto'] || 'http';
       const base = process.env.BASE_URL || `${proto}://${req.headers.host}`;
@@ -193,13 +227,18 @@ async function handleRequest(req, res) {
     });
     return;
   }
-  // Demo helpers (disabled in production): fetch a test key / simulate checkout
+  // Demo helpers: fetch a test key / simulate checkout (LOCAL DEV ONLY — disabled in production)
   if (url.pathname === '/api/license/demo' && !IS_PROD) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ key: DEMO_KEY }));
     return;
   }
-  if (url.pathname === '/api/license/checkout-demo' && req.method === 'POST' && !IS_PROD) {
+  if (url.pathname === '/api/license/checkout-demo' && req.method === 'POST') {
+    if (IS_PROD) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'demo_disabled', message: 'Demo checkout is disabled in production. Please complete Paystack checkout to receive a license key.' }));
+      return;
+    }
     let body = '';
     req.on('data', c => { body += c; if (body.length > 4096) req.destroy(); });
     req.on('end', () => {
@@ -213,7 +252,7 @@ async function handleRequest(req, res) {
 
   if (url.pathname === '/api/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, rooms: rooms.size, peers: [...rooms.values()].reduce((n, r) => n + r.size, 0) }));
+    res.end(JSON.stringify({ ok: true, rooms: rooms.size, peers: [...rooms.values()].reduce((n, r) => n + r.size, 0), standalone: require.main === module }));
     return;
   }
 
@@ -233,8 +272,6 @@ module.exports = handleRequest;
 
 // ---------------------------------------------------------------- signaling
 /** rooms: Map<code, Map<peerId, peer>>  peer = {id, role, name, caps, ws} */
-const rooms = new Map();
-let peerSeq = 1;
 
 if (require.main === module) {
   const wss = new WebSocketServer({ server });

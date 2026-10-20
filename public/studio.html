@@ -194,8 +194,8 @@
 
       <div class="ctl-row"><div><div class="lab">🔦 Torch</div><div class="sub" id="torchSub">phone flashlight</div></div>
         <label class="switch"><input type="checkbox" id="torchSw"><span class="track"></span></label></div>
-      <div class="ctl-row"><div><div class="lab">🎙️ Phone microphone</div><div class="sub">routed to program audio</div></div>
-        <label class="switch"><input type="checkbox" id="micSw" checked><span class="track"></span></label></div>
+      <div class="ctl-row"><div><div class="lab">🎙️ Phone microphone</div><div class="sub">off by default — enable only for program audio</div></div>
+        <label class="switch"><input type="checkbox" id="micSw" aria-label="Phone microphone — route to program audio"><span class="track"></span></label></div>
       <div class="ctl-row"><div><div class="lab">🪞 Mirror image</div><div class="sub">flip horizontally</div></div>
         <label class="switch"><input type="checkbox" id="mirrorSw"><span class="track"></span></label></div>
       <div class="ctl-row"><div><div class="lab">🌙 Battery-saver dim</div><div class="sub">near-black phone screen, less heat</div></div>
@@ -308,12 +308,30 @@ let programId = null, controlId = null;
 let ws = null;
 
 /* ------------------------------------------------------------------ WS */
+/* Signaling endpoint: same host by default. On static-only hosts (e.g. Vercel)
+   the server advertises SIGNAL_URL via /api/config/public so clients dial the
+   persistent WebSocket server (e.g. Render) instead. */
+let SIGNAL_BASE = '';
+function wsUrl() {
+  const base = SIGNAL_BASE || location.host;
+  return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${base}`;
+}
+fetch('/api/config/public').then(r => r.json()).then(cfg => {
+  if (cfg && cfg.signalUrl) {
+    try { SIGNAL_BASE = new URL(cfg.signalUrl).host; } catch { SIGNAL_BASE = String(cfg.signalUrl).replace(/^wss?:\/\//, '').replace(/\/$/, ''); }
+  }
+}).catch(() => {});
+let wsRetryN = 0, wsRetryTimer = null;
+const WS_DIAG = 'sig-' + Math.random().toString(36).slice(2, 8);
 function connectWS() {
-  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
+  clearTimeout(wsRetryTimer);
+  ws = new WebSocket(wsUrl());
   ws.onopen = () => {
+    wsRetryN = 0;
     $('#wsChip').innerHTML = '<span class="dot pulse" style="color:var(--green)"></span> studio live';
     $('#wsChip').className = 'chip on';
     ws.send(JSON.stringify({ type: 'join', room: ROOM, role: 'studio', name: 'Studio' }));
+    hideWsError();
   };
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
@@ -331,8 +349,32 @@ function connectWS() {
       else if (m.kind === 'state') onCamState(m.from, m.data);
     }
   };
-  ws.onclose = () => { $('#wsChip').innerHTML = '<span class="dot"></span> reconnecting…'; $('#wsChip').className = 'chip'; setTimeout(connectWS, 2000); };
+  ws.onclose = () => {
+    wsRetryN++;
+    const wait = Math.min(2000 * wsRetryN, 15000);
+    $('#wsChip').innerHTML = `<span class="dot"></span> reconnecting… (try ${wsRetryN})`;
+    $('#wsChip').className = 'chip';
+    showWsError(wsRetryN);
+    wsRetryTimer = setTimeout(connectWS, wait);
+  };
+  ws.onerror = () => { try { ws.close(); } catch {} };
 }
+function showWsError(n) {
+  let bar = document.getElementById('wsErrBar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'wsErrBar';
+    bar.style.cssText = 'margin:0 14px;padding:10px 14px;border:1px solid #6e2233;background:#2a0f16;border-radius:10px;font-size:12.5px;color:#ffb4c0;display:flex;gap:10px;align-items:center;flex-wrap:wrap';
+    document.querySelector('main')?.before(bar);
+  }
+  bar.innerHTML = `⚠️ <b>Signaling server unreachable</b> (attempt ${n}). Phones can't pair until this reconnects. ` +
+    `<button class="btn small" id="wsRetryBtn">Retry now</button>` +
+    `<button class="btn small" id="wsDiagBtn">Copy diagnostic ID</button>` +
+    `<span style="color:#8b96b8">diag: <code>${WS_DIAG}</code> · check that the signaling server supports WebSockets</span>`;
+  document.getElementById('wsRetryBtn').onclick = () => { wsRetryN = 0; connectWS(); };
+  document.getElementById('wsDiagBtn').onclick = () => copy(`AirStudio signaling failure · diag ${WS_DIAG} · room ${ROOM} · host ${location.host} · signal ${SIGNAL_BASE || '(same host)'} · ${new Date().toISOString()}`, 'Diagnostic info copied');
+}
+function hideWsError() { document.getElementById('wsErrBar')?.remove(); }
 const relay = (to, kind, data) => ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'relay', to, kind, data }));
 const relayRole = (role, kind, data) => ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'relay-role', role, kind, data }));
 const control = data => { if (window.__premiumGate && !window.__premiumGate(data)) return; if (controlId) relay(controlId, 'control', data); };
@@ -500,7 +542,7 @@ function refreshControlPanel() {
 }
 function syncStateToPanel(st) {
   $('#torchSw').checked = !!st.torch;
-  $('#micSw').checked = st.micOn !== false;
+  $('#micSw').checked = st.micOn === true; // mic is opt-in — never default on
   $('#dimSw').checked = !!st.dim;
   $('#mirrorSw').checked = !!st.fx?.mirror;
   $('#llSw').checked = !!st.fx?.lowlight;
@@ -638,7 +680,7 @@ function meterLoop() {
 
 /* ------------------------------------------------ snapshot / record / fs */
 $('#snapBtn').addEventListener('click', () => {
-  const v = $('#programVideo'); if (!v.videoWidth) return;
+  const v = $('#programVideo'); if (!v.videoWidth) { ptoast('Connect a camera first.'); return; }
   const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
   c.getContext('2d').drawImage(v, 0, 0);
   c.toBlob(b => downloadBlob(b, `airstudio-${Date.now()}.png`), 'image/png');
@@ -816,7 +858,7 @@ refreshControlPanel();
   const badge = document.createElement('button');
   badge.id = 'tierBadge'; badge.className = 'btn small free'; badge.textContent = 'FREE PLAN — Upgrade ⭐';
   document.getElementById('wsChip')?.after(badge);
-  badge.addEventListener('click', openUpgrade);
+  badge.addEventListener('click', () => openUpgrade('Premium plan'));
 
   /* ---- watermark (free) ---- */
   const wm = document.createElement('div');
@@ -856,7 +898,7 @@ refreshControlPanel();
   /* Multi-cam + recording gates (capture phase, before app handlers) */
   document.addEventListener('click', e => {
     if (premium.active) return;
-    if (e.target.id === 'recBtn') { e.stopPropagation(); e.preventDefault(); openUpgrade('Program recording'); return; }
+    if (e.target.id === 'recBtn') { e.stopPropagation(); e.preventDefault(); if (cams.size === 0) { ptoast('Connect a camera first.'); return; } openUpgrade('Program recording'); return; }
     const cut = e.target.closest && e.target.closest('.camcard .cut');
     if (cut) {
       const cards = [...document.querySelectorAll('.camstrip .camcard')];
@@ -922,6 +964,9 @@ refreshControlPanel();
   let selectedPlan = 'yearly';
   function openUpgrade(feature) {
     if (premium.active) { ptoast('⭐ Premium is active — everything is unlocked. Enjoy!'); return; }
+    // Guard: never render an Event object as the feature name (regression fix
+    // for "[object PointerEvent] is a Premium feature").
+    if (feature && typeof feature !== 'string') feature = null;
     if (feature) document.getElementById('umReason').innerHTML =
       `<b style="color:var(--text)">${feature}</b> is a Premium feature. Unlock it — and the entire studio — below.`;
     modal.classList.add('open');
@@ -971,21 +1016,34 @@ refreshControlPanel();
     } catch { ptoast('Demo keys are disabled on this server.'); }
   });
   /* Paystack mode when the server has keys configured; otherwise demo checkout */
-  let paystackEnabled = false;
+  let paystackEnabled = false, demoEnabled = true, signalUrl = '';
   fetch('/api/config/public').then(r => r.json()).then(cfg => {
     paystackEnabled = !!cfg.paystackEnabled;
-    if (stripeEnabled) {
+    demoEnabled = cfg.demoEnabled !== false;
+    signalUrl = cfg.signalUrl || '';
+    if (paystackEnabled) {
       const b = document.getElementById('checkoutBtn');
       b.textContent = 'Checkout with Paystack →';
       if (b.nextElementSibling) b.nextElementSibling.textContent = 'Secure payment via Paystack. Your license key activates automatically when you return to this page.';
+    } else if (!demoEnabled) {
+      const b = document.getElementById('checkoutBtn');
+      b.disabled = true;
+      b.textContent = 'Online checkout coming soon — use a purchased key below';
+      if (b.nextElementSibling) b.nextElementSibling.textContent = 'Demo checkout is disabled in production and Paystack is not configured yet. Enter a purchased license key below to unlock Premium.';
     }
   }).catch(() => {});
 
   document.getElementById('checkoutBtn').addEventListener('click', async () => {
+    const emailInput = document.getElementById('checkoutEmail');
     const msg = document.getElementById('licMsg');
-    const email = document.getElementById('checkoutEmail').value.trim();
+    const email = emailInput.value.trim();
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      emailInput.setAttribute('required', '');
+      msg.style.color = 'var(--red)'; msg.textContent = 'Please enter a valid email — your license key is delivered to it.';
+      emailInput.focus();
+      return;
+    }
     if (paystackEnabled) {
-      if (!email) { msg.style.color = 'var(--red)'; msg.textContent = 'Please enter your email.'; return; }
       msg.style.color = 'var(--muted)'; msg.textContent = 'Redirecting to Paystack Checkout…';
       try {
         const j = await (await fetch('/api/checkout/paystack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: selectedPlan, email }) })).json();

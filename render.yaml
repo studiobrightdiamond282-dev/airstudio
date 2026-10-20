@@ -24,3 +24,5 @@ services:
         sync: false
       - key: BASE_URL
         sync: false
+      - key: OWNER_LICENSE_KEYS
+        sync: false
