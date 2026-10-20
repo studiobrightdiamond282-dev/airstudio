@@ -92,7 +92,21 @@ AirStudio — Phone-as-4K-Studio-Webcam software. Node.js + WebRTC server with w
 **Verification:** Local server + WS test passed (14/14 tests incl. HTTP routes + signaling relay).
 **Status:** Committed `8ccef18` and pushed to `main`; Render auto-deploy ON COMMIT → live at `https://airstudio.onrender.com`.
 
-### 7. Paystack Production Setup (PENDING)
+### 7. vMix Output Fix #2 — Missing Variable Declarations (FIXED + DEPLOYED)
+**Problem:** vMix Browser input loading `/output?code=X` still showed "Waiting for camera..." after fix #6.
+**Root cause:** `output.html` used `peers` (a Map) and `programId` throughout its script but **never declared them**. With `'use strict'` at the top, every access threw a `ReferenceError`, silently breaking the WebRTC signaling/ontrack logic — so no video track was ever attached to the `<video>` element.
+**Fix (`public/output.html`):** Added `let peers = new Map();` and `let programId = null;` declarations.
+**Verification:** Syntax check passed; local server + WS test passed (14/14 tests).
+**Status:** Committed `14108ff` and pushed to `main`; Render auto-deploy ON COMMIT → live at `https://airstudio.onrender.com`.
+
+### 8. vMix Output Fix #3 — Autoplay Blocked by Chrome Policy (FIXED + DEPLOYED)
+**Problem:** vMix Browser input shows video element but video never starts playing (stuck on "Waiting for camera…" or black).
+**Root cause:** With `audio=1`, `video.muted` was set to `false`. Chrome's autoplay policy blocks unmuted videos from autoplaying without a user gesture — vMix browser sources have no user gesture, so the video never starts even after a stream attaches.
+**Fix (`public/output.html`):** Video now starts `muted = true` (guaranteeing autoplay) and unmutes on the `playing` event when `audio=1` is requested.
+**Verification:** Syntax check passed.
+**Status:** Committed `a8b7dc8` and pushed to `main`; Render auto-deploy ON COMMIT → live at `https://airstudio.onrender.com`.
+
+### 9. Paystack Production Setup (PENDING)
 **Current state:** Paystack env vars are set in Render (`PAYSTACK_SECRET_KEY`, `PAYSTACK_PUBLIC_KEY`, prices, `BASE_URL`), `NODE_ENV=production` is set.
 **Plan:** Test live Paystack checkout → webhook key issuance flow end-to-end.
 
