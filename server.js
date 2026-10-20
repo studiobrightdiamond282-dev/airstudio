@@ -316,7 +316,7 @@ wss.on('connection', (ws) => {
       me = {
         id: 'p' + (peerSeq++).toString(36) + Date.now().toString(36).slice(-3),
         role: ['studio', 'camera', 'output'].includes(msg.role) ? msg.role : 'camera',
-        name: String(msg.name || `Camera ${[...room.values()].filter(p => p.role === 'camera').length + 1}`).slice(0, 80),
+        name: String(msg.name || `Camera ${[...room.values()].filter(p => p.role === 'camera').length + 1}`).slice(0, 120),
         caps: msg.caps || null,
         room: code,
         ws,

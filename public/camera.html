@@ -651,7 +651,7 @@ function connectWS() {
   state.ws = ws;
   ws.onopen = () => {
     wsAttempt = 0;
-    ws.send(JSON.stringify({ type: 'join', room: state.room, role: 'camera', name: state.name }));
+    ws.send(JSON.stringify({ type: 'join', room: state.room, role: 'camera', name: state.name, ua: navigator.userAgent }));
   };
   ws.onmessage = async ev => {
     const msg = JSON.parse(ev.data);
