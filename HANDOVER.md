@@ -56,7 +56,7 @@ AirStudio — Phone-as-4K-Studio-Webcam software. Node.js + WebRTC server with w
 - Refactored `server.js` to export `handleRequest` (Vercel-compatible)
 - Created `/airstudio/api/[[...path]].js` — Vercel catch-all serverless function for `/api/*` routes
 - Simplified `vercel.json` to file-based routing
-- **Status:** Deployed to Vercel at `https://airstudio-one.vercel.app`; `/api/health` returns `{"ok":true}` ✅
+- **Status (2026-10-20):** Redeployed to Vercel via CLI (`vercel --prod`, team velora-7d47, project `airstudio`). Live at **https://airstudiocam.vercel.app** with aliases **https://airstudio-one.vercel.app** (restored) and `airstudio-1zlhobles-velora-7d47.vercel.app`; `/api/health` returns `{"ok":true,"standalone":false}` ✅ (serverless — signaling/WebRTC relay requires Render; Vercel hosts static pages + HTTP API only)
 
 ### 3. Lifetime License Key Generated
 **Key:** `AIRS-YCQM-PWJR-8QGW`
