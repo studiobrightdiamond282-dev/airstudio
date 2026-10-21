@@ -28,6 +28,24 @@ npm start           # → http://localhost:3000
 > e.g. `ngrok http 3000`, Cloudflare Tunnel, Tailscale Funnel, or your own
 > reverse proxy with Let's Encrypt. Media itself stays peer-to-peer.
 
+## Install on your phone (no App Store)
+
+AirStudio is a Progressive Web App — install it straight from the mobile browser,
+no App Store or Play Store needed:
+
+- **Android (Chrome):** open your AirStudio URL, tap **⋮ → Install app** (or the
+  **📲 Install AirStudio App** button on the camera page). It lands on your home
+  screen, opens in its own window, works offline, and remembers your pairing code.
+- **iPhone/iPad (Safari):** tap **Share** → **Add to Home Screen**. Open it from
+  your home screen — it runs full-screen like a native app.
+
+Once installed, open the app, scan the Studio's QR code (or type the pairing code),
+allow camera/mic, and you're live as a wireless studio camera.
+
+> Camera access requires `https://` (or `localhost`). For LAN use, put AirStudio
+> behind HTTPS — `ngrok http 3000`, Cloudflare Tunnel, Tailscale Funnel, or your
+> own Let's Encrypt reverse proxy.
+
 ## What's inside
 
 | Path | Purpose |

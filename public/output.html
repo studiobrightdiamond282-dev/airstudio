@@ -8,6 +8,9 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#070a14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AirStudio">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; background: #000; overflow: hidden; font-family: system-ui, sans-serif; }
@@ -18,6 +21,13 @@
   }
   #wait b { color: #aab6dd; font-size: 17px; }
 </style>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/service-worker.js').catch((err) => {
+        console.log('[AirStudio] Service worker registration failed:', err);
+      });
+    }
+  </script>
 </head>
 <body>
 <video id="v" autoplay playsinline></video>

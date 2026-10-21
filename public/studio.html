@@ -8,6 +8,9 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#070a14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AirStudio">
 <link rel="stylesheet" href="/style.css">
 <style>
   body { min-height: 100dvh; display: flex; flex-direction: column; }
@@ -64,6 +67,13 @@
   details.help ol { padding-left: 18px; margin: 6px 0; }
   code { font-family: var(--mono); font-size: 11.5px; background: #0a1024; border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; color: #b9c4ff; word-break: break-all; }
 </style>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/service-worker.js').catch((err) => {
+        console.log('[AirStudio] Service worker registration failed:', err);
+      });
+    }
+  </script>
 </head>
 <body>
 
@@ -385,6 +395,50 @@ const relay = (to, kind, data) => ws?.readyState === 1 && ws.send(JSON.stringify
 const relayRole = (role, kind, data) => ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'relay-role', role, kind, data }));
 const control = data => { if (window.__premiumGate && !window.__premiumGate(data)) return; if (controlId) relay(controlId, 'control', data); };
 
+/* Control-message throttle.
+ * Range inputs fire an 'input' event on every pointer move — up to ~60Hz per
+ * slider. Each one was relayed to the phone, where it triggered a full
+ * telemetry round-trip and a card re-render in the Studio. That saturated the
+ * signaling socket and the phone's main thread, which showed up as live-stream
+ * lag and jittery statistics.
+ * Coalesce rapid updates of the SAME action to at most one message per
+ * INTERVAL, and always flush the final value so the end state is exact.
+ */
+const CONTROL_THROTTLE_MS = 80;
+let _ctlTimer = null, _ctlPending = null, _ctlLastSent = 0, _ctlLastAction = null;
+function controlThrottled(data) {
+  // Different action than last time => flush any pending value of the old
+  // action first (so the phone never keeps a stale slider position), then
+  // send the new command immediately.
+  if (data.action !== _ctlLastAction) {
+    _ctlLastAction = data.action;
+    if (_ctlPending) {
+      clearTimeout(_ctlTimer); _ctlTimer = null;
+      const prev = _ctlPending; _ctlPending = null;
+      control(prev);
+    }
+    control(data);
+    _ctlLastSent = performance.now();
+    return;
+  }
+  _ctlPending = data;                       // keep the newest value
+  const elapsed = performance.now() - _ctlLastSent;
+  if (elapsed >= CONTROL_THROTTLE_MS) {
+    clearTimeout(_ctlTimer); _ctlTimer = null;
+    const d = _ctlPending; _ctlPending = null;
+    control(d);
+    _ctlLastSent = performance.now();
+  } else if (!_ctlTimer) {
+    _ctlTimer = setTimeout(() => {
+      _ctlTimer = null;
+      if (!_ctlPending) return;
+      const d = _ctlPending; _ctlPending = null;
+      control(d);
+      _ctlLastSent = performance.now();
+    }, CONTROL_THROTTLE_MS - elapsed);
+  }
+}
+
 /* --------------------------------------------------------------- cameras */
 function ensureCam(peer) {
   if (cams.has(peer.id)) return cams.get(peer.id);
@@ -398,7 +452,8 @@ function ensureCam(peer) {
     </div>`;
   $('#camStrip').appendChild(el);
   const cam = { id: peer.id, name: peer.name, caps: peer.caps, state: null, pc: null, stream: null,
-                cardEl: el, videoEl: el.querySelector('video'), history: [], lastBytes: 0, lastT: 0, kbps: 0, fps: 0 };
+                cardEl: el, videoEl: el.querySelector('video'), history: [], lastBytes: 0, lastT: 0, kbps: 0, fps: 0,
+                lastFramesDecoded: null, lastFramesT: 0 };
   cams.set(peer.id, cam);
   el.addEventListener('click', e => { if (!e.target.classList.contains('cut')) selectControl(peer.id); });
   el.querySelector('.cut').addEventListener('click', () => setProgram(peer.id));
@@ -436,9 +491,17 @@ function renderCamLinks() {
   const div = document.getElementById('camLinks');
   if (!div) return;
   if (cams.size === 0) {
-    div.innerHTML = '<span class="note">No cameras connected yet</span>';
+    if (div.dataset.sig !== 'empty') { div.innerHTML = '<span class="note">No cameras connected yet</span>'; div.dataset.sig = 'empty'; }
     return;
   }
+  // Rebuilding this list (innerHTML = '' + recreating every row) on every
+  // renderCard() was a significant cost: renderCard runs on every telemetry
+  // message and every 1s stats poll, so the link list was being torn down and
+  // re-created dozens of times a second while a slider was being dragged.
+  // Only rebuild when the set of cameras actually changed.
+  const sig = [...cams.values()].map(c => `${c.id}:${c.state?.name || c.name || ''}`).join('|');
+  if (div.dataset.sig === sig) return;
+  div.dataset.sig = sig;
   div.innerHTML = '';
   let idx = 1;
   for (const c of cams.values()) {
@@ -596,13 +659,13 @@ const escapeHtml = s => String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<':
 /* ------------------------------------------------------------ wire controls */
 $('#resSel').addEventListener('change', e => { const [w, h] = e.target.value.split('x').map(Number); control({ action: 'resolution', width: w, height: h }); });
 $('#fpsSel').addEventListener('change', e => control({ action: 'fps', fps: Number(e.target.value) }));
-$('#zoomRange').addEventListener('input', e => { $('#zoomVal').textContent = Number(e.target.value).toFixed(1) + '×'; control({ action: 'zoom', value: Number(e.target.value) }); });
-$('#evRange').addEventListener('input', e => { $('#evVal').textContent = Number(e.target.value).toFixed(1); control({ action: 'exposureComp', value: Number(e.target.value) }); });
-$('#wbRange').addEventListener('input', e => { $('#wbVal').textContent = e.target.value + 'K'; if (!$('#wbAuto').checked) control({ action: 'wbTemp', value: Number(e.target.value) }); });
+$('#zoomRange').addEventListener('input', e => { $('#zoomVal').textContent = Number(e.target.value).toFixed(1) + '×'; controlThrottled({ action: 'zoom', value: Number(e.target.value) }); });
+$('#evRange').addEventListener('input', e => { $('#evVal').textContent = Number(e.target.value).toFixed(1); controlThrottled({ action: 'exposureComp', value: Number(e.target.value) }); });
+$('#wbRange').addEventListener('input', e => { $('#wbVal').textContent = e.target.value + 'K'; if (!$('#wbAuto').checked) controlThrottled({ action: 'wbTemp', value: Number(e.target.value) }); });
 $('#wbAuto').addEventListener('change', e => control(e.target.checked ? { action: 'wbAuto' } : { action: 'wbTemp', value: Number($('#wbRange').value) }));
 $('#focusSel').addEventListener('change', e => control({ action: 'focusMode', mode: e.target.value }));
-$('#fdRange').addEventListener('input', e => { $('#fdVal').textContent = Number(e.target.value).toFixed(2) + 'm'; $('#focusSel').value = 'manual'; control({ action: 'focusDistance', value: Number(e.target.value) }); });
-$('#isoRange').addEventListener('input', e => { $('#isoVal').textContent = e.target.value; if (!$('#expAuto').checked) control({ action: 'iso', value: Number(e.target.value) }); });
+$('#fdRange').addEventListener('input', e => { $('#fdVal').textContent = Number(e.target.value).toFixed(2) + 'm'; $('#focusSel').value = 'manual'; controlThrottled({ action: 'focusDistance', value: Number(e.target.value) }); });
+$('#isoRange').addEventListener('input', e => { $('#isoVal').textContent = e.target.value; if (!$('#expAuto').checked) controlThrottled({ action: 'iso', value: Number(e.target.value) }); });
 $('#expAuto').addEventListener('change', e => control(e.target.checked ? { action: 'exposureAuto' } : { action: 'iso', value: Number($('#isoRange').value) }));
 $('#torchSw').addEventListener('change', e => control({ action: 'torch', on: e.target.checked }));
 $('#micSw').addEventListener('change', e => control({ action: 'mic', on: e.target.checked }));
@@ -626,7 +689,7 @@ $('#bgPresetGrid').addEventListener('click', e => {
   bgPreset = b.dataset.bgpreset; bgMode = 'image'; applyBgUI();
   control({ action: 'bgmode', mode: 'image', preset: bgPreset });
 });
-$('#bgRange').addEventListener('input', e => { $('#bgVal').textContent = e.target.value + 'px'; if (bgMode === 'blur') control({ action: 'bgmode', mode: 'blur', strength: Number(e.target.value) }); });
+$('#bgRange').addEventListener('input', e => { $('#bgVal').textContent = e.target.value + 'px'; if (bgMode === 'blur') controlThrottled({ action: 'bgmode', mode: 'blur', strength: Number(e.target.value) }); });
 $('#bgUpload').addEventListener('change', e => {
   const file = e.target.files[0]; if (!file) return;
   const url = URL.createObjectURL(file); const img = new Image();
@@ -642,7 +705,7 @@ $('#bgUpload').addEventListener('change', e => {
   img.src = url;
 });
 $('#afSw').addEventListener('change', e => control({ action: 'autoframe', on: e.target.checked }));
-$('#beautyRange').addEventListener('input', e => { $('#beautyVal').textContent = e.target.value + '%'; control({ action: 'beauty', value: Number(e.target.value) }); });
+$('#beautyRange').addEventListener('input', e => { $('#beautyVal').textContent = e.target.value + '%'; controlThrottled({ action: 'beauty', value: Number(e.target.value) }); });
 $('#llSw').addEventListener('change', e => control({ action: 'lowlight', on: e.target.checked }));
 
 /* PTZ pad */
@@ -655,7 +718,7 @@ function drawPtz() {
   f.style.top = Math.min(Math.max(ptz.y * 100 - h / 2, 0), 100 - h) + '%';
   $('#ptzVal').textContent = ptz.scale.toFixed(1) + '×';
 }
-function sendPtz() { control({ action: 'ptz', ptz: { ...ptz } }); drawPtz(); }
+function sendPtz() { controlThrottled({ action: 'ptz', ptz: { ...ptz } }); drawPtz(); }
 $('#ptzPad').addEventListener('pointerdown', e => {
   const r = e.currentTarget.getBoundingClientRect();
   const move = ev => { ptz.x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)); ptz.y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height)); sendPtz(); };
@@ -752,9 +815,25 @@ async function pollStats() {
       stats.forEach(r => {
         if (r.type === 'inbound-rtp' && r.kind === 'video') {
           const now = r.timestamp;
-          if (c.lastT) { const dt = (now - c.lastT) / 1000; if (dt > 0) c.kbps = Math.round(((r.bytesReceived - c.lastBytes) * 8) / dt / 1000); }
+          if (c.lastT) {
+            const dt = (now - c.lastT) / 1000;
+            // Guard against counter resets (e.g. the track was replaced).
+            const dB = r.bytesReceived - (c.lastBytes || 0);
+            if (dt > 0 && dB >= 0) c.kbps = Math.round((dB * 8) / dt / 1000);
+          }
           c.lastBytes = r.bytesReceived; c.lastT = now;
-          if (r.framesPerSecond) c.fps = Math.round(r.framesPerSecond);
+          // Prefer framesDecoded/framesEncoded deltas; fall back to
+          // framesPerSecond where the browser provides it.
+          if (typeof r.framesDecoded === 'number') {
+            if (c.lastFramesDecoded != null) {
+              const dt = (now - (c.lastFramesT || now)) / 1000;
+              const dF = r.framesDecoded - c.lastFramesDecoded;
+              if (dt > 0 && dF >= 0) c.fps = Math.round(dF / dt);
+            }
+            c.lastFramesDecoded = r.framesDecoded; c.lastFramesT = now;
+          } else if (r.framesPerSecond) {
+            c.fps = Math.round(r.framesPerSecond);
+          }
           c.jitter = r.jitter; c.lost = r.packetsLost;
           c.history.push(c.kbps); if (c.history.length > 90) c.history.shift();
         }

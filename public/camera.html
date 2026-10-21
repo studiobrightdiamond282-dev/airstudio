@@ -8,6 +8,9 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#070a14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AirStudio">
 <link rel="stylesheet" href="/style.css">
 <style>
   body { overflow: hidden; }
@@ -79,6 +82,13 @@
     body.force-landscape #camScreen { width: 100dvh; height: 100dvw; left: 100dvw; }
   }
 </style>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/service-worker.js').catch((err) => {
+        console.log('[AirStudio] Service worker registration failed:', err);
+      });
+    }
+  </script>
 </head>
 <body>
 
@@ -97,6 +107,8 @@
     <input id="codeInput" class="input" maxlength="6" placeholder="------" autocomplete="off" autocapitalize="characters">
     <div id="joinError"></div>
     <button id="joinBtn" class="btn primary" style="width:100%;justify-content:center;padding:14px">📷 Start Camera</button>
+    <button id="installBtn" class="btn" style="width:100%;justify-content:center;padding:12px;margin-top:10px;border:1px dashed var(--line)" hidden>📲 Install AirStudio App</button>
+    <p id="iosInstallHint" style="margin-top:10px;font-size:12px;color:var(--muted);display:none">iPhone/iPad: tap <b>Share</b> → <b>Add to Home Screen</b> to install AirStudio as an app.</p>
     <p style="margin-top:14px;font-size:12px">Tip: keep this tab in the foreground while streaming. Use the 🌙 battery-saver once you're framed up.</p>
   </div>
 </div>
@@ -180,9 +192,14 @@ const state = {
   seg: null, segMask: null, segBusy: false, segFailed: false,
   face: null, faceBusy: false, faceFailed: false, lastFaceAt: 0, bgImageCanvas: null,
   battery: null, lastBytes: 0, lastStatT: 0, outKbps: 0, outFps: 0,
+  maxBitrateKbps: 0,     // ceiling we last applied to the encoder
+  lastFramesEncoded: 0,  // baseline for FPS-from-framesEncoded
   thermalLevel: 0,      // 0=cool,1=warm,2=hot,3=critical
   networkQuality: 'good',
   targetFps: 30, currentFps: 0, lastFrameTime: 0,
+  requestedFps: 30,       // frame rate requested by the Studio (ceiling for battery saver)
+  _fpsCount: 0, _fpsLastT: 0,   // local render-loop FPS measurement
+  fxStreamFps: 0,        // capture rate the canvas stream was created with
   prompter: { text: '', playing: false, speed: 40, size: 21, offset: 0 },
   reconnectTimer: null,
 };
@@ -281,8 +298,8 @@ async function startCapture(videoOpts, labelHint) {
   const hint = labelHint || lensHintForCurrent();
   const constraints = {
     video: {
-      width: { ideal: state.want.width }, height: { ideal: state.want.height },
-      frameRate: { ideal: state.want.fps },
+      width: { ideal: state.want.width, min: Math.floor(state.want.width * 0.75) }, height: { ideal: state.want.height, min: Math.floor(state.want.height * 0.75) },
+      frameRate: { min: Math.max(15, state.want.fps), ideal: state.want.fps },
       ...opts,
     },
     audio: state.audioTrack
@@ -419,8 +436,13 @@ function videoSenderOf(pc) {
 }
 function refreshOutbound() {
   const wantFx = processingNeeded() && typeof fxCanvas.captureStream === 'function';
-  if (wantFx && !state.fxStream) {
-    state.fxStream = fxCanvas.captureStream(state.want.fps);
+  if (wantFx && (!state.fxStream || state.fxStreamFps !== state.targetFps)) {
+    // Recreate the canvas capture stream when the output frame rate changes.
+    // captureStream(fps) locks in the capture rate at creation time, so a
+    // stale stream kept sending at the old rate and produced uneven pacing.
+    if (state.fxStream) { try { state.fxStream.getTracks().forEach(t => t.stop()); } catch {} }
+    state.fxStream = fxCanvas.captureStream(state.targetFps || 30);
+    state.fxStreamFps = state.targetFps || 30;
     state.fxTrack = state.fxStream.getVideoTracks()[0];
     if (state.fxTrack) state.fxTrack.contentHint = 'detail';
   }
@@ -440,18 +462,36 @@ function tuneSender(sender) {
     const h = state.videoTrack?.getSettings?.().height || 720;
     const thermal = state.thermalLevel || 0;
     const net = state.networkQuality || 'good';
-    // Aggressively lowered bitrates — phones overheat at 22Mbps/12Mbps
+    // Bitrate ceilings tuned for smooth streaming on 4G/5G — prioritize quality.
+    // Keep ceilings high enough that the encoder isn't starved.
     let maxKbps;
-    if (net === 'poor' || thermal >= 2) maxKbps = h >= 1000 ? 2500 : 1500;   // poor network / hot: very low bitrate
-    else if (net === 'degraded' || thermal === 1) maxKbps = h >= 1000 ? 4000 : 2500;
-    else maxKbps = h >= 1000 ? 6000 : 3500;                                   // good network / cool: moderate bitrate
-    p.encodings[0].maxBitrate = maxKbps * 1000;
-    p.encodings[0].maxFramerate = state.targetFps || 30;
-    // Keyframe interval: send keyframe every 2 seconds (reduces encoder load)
+    if (net === 'poor' || thermal >= 2) maxKbps = h >= 1000 ? 3500 : 2500;   // poor network / hot: low bitrate
+    else if (net === 'degraded' || thermal === 1) maxKbps = h >= 1000 ? 5000 : 3500;
+    else maxKbps = h >= 1000 ? 8000 : 5000;                                   // good network / cool: higher bitrate
+    // Remember the ceiling we applied so collectStats() can tell whether the
+    // encoder is actually being starved (vs. simply sending less content).
+    state.maxBitrateKbps = maxKbps;
+    const wantBitrate = maxKbps * 1000;
+    const wantFps = state.targetFps || 30;
+    // Only touch setParameters when something actually changed.
+    // setParameters() re-configures the hardware encoder, which costs a
+    // keyframe + a burst of frames. Calling it every second (as the stats
+    // poller used to) was a major source of the "live" lag: the encoder was
+    // being re-initialised ~60x/minute.
+    const cur = p.encodings[0];
+    if (cur.maxBitrate === wantBitrate && cur.maxFramerate === wantFps) {
+      try { if (state.videoTrack) state.videoTrack.contentHint = 'detail'; } catch {}
+      return;
+    }
+    p.encodings[0].maxBitrate = wantBitrate;
+    p.encodings[0].maxFramerate = wantFps;
+    // Keyframe interval: force a keyframe every ~2 seconds so the studio can
+    // begin decoding quickly after a gap / re-connect.
     p.encodings[0].framerateScale = 1.0;
     if (typeof p.encodings[0].scaleResolutionDownBy === 'undefined') {
       p.encodings[0].scaleResolutionDownBy = 1.0;
     }
+    try { if (state.videoTrack) state.videoTrack.contentHint = 'detail'; } catch {}
     sender.setParameters(p).catch(() => {});
   } catch {}
 }
@@ -460,6 +500,22 @@ function tuneSenderForAll() {
     const sender = videoSenderOf(pc);
     if (sender) tuneSender(sender);
   }
+}
+/* Single place that owns the output frame rate.
+ * state.want.fps  = frame rate requested by the Studio (24/30/60)
+ * state.targetFps = frame rate the render loop + encoder actually produce
+ * They must agree, otherwise the canvas captureStream drops frames and the
+ * Studio sees stutter. Battery saver may only lower the effective rate.
+ */
+function setTargetFps(fps) {
+  const want = Number(fps);
+  if (!want || want < 5) return;
+  state.requestedFps = want;   // Studio's request = the ceiling
+  state.want.fps = want;
+  state.targetFps = want;
+  state._fpsCount = 0;
+  state._fpsLastT = 0;
+  tuneSenderForAll();
 }
 function updatePreviewChrome() {
   const front = state.facing === 'user';
@@ -523,8 +579,22 @@ function drawFrame(vw, vh) {
       ctx.filter = `brightness(${bri}) contrast(${con}) saturate(${sat})`;
       drawCover(ctx, state.bgImageCanvas, vw, vh);
     } else {
-      ctx.filter = `blur(${f.bgstrength}px) brightness(${bri}) contrast(${con}) saturate(${sat})`;
-      ctx.drawImage(rawVideo, sx, sy, sw, sh, -f.bgstrength, -f.bgstrength, vw + f.bgstrength * 2, vh + f.bgstrength * 2);
+      // Blur plate, rendered at reduced resolution.
+      // A full-res blur() every frame is the single most expensive operation
+      // in the pipeline (it was the main cause of the frame-rate collapse when
+      // background blur was on). Blurring a quarter-size copy and scaling it
+      // up is visually equivalent for a soft background and ~16x cheaper.
+      const bc = blurCanvas, bctx = bc.getContext('2d');
+      const bw = Math.max(2, vw >> 2), bh = Math.max(2, vh >> 2);
+      if (bc.width !== bw) { bc.width = bw; bc.height = bh; }
+      bctx.filter = `blur(${Math.max(1, f.bgstrength / 4)}px)`;
+      bctx.drawImage(rawVideo, sx, sy, sw, sh, 0, 0, bw, bh);
+      bctx.filter = 'none';
+      ctx.filter = `brightness(${bri}) contrast(${con}) saturate(${sat})`;
+      // 5-arg form: scale the small plate up, over-drawing the edges by
+      // bgstrength so the blur bleeds past the frame instead of showing a
+      // hard border.
+      ctx.drawImage(bc, -f.bgstrength, -f.bgstrength, vw + f.bgstrength * 2, vh + f.bgstrength * 2);
     }
     // Person cut-out
     const pc = personCanvas, pctx = pc.getContext('2d');
@@ -795,7 +865,11 @@ async function onControl(d) {
         await startCapture(state.currentDeviceId ? { deviceId: { exact: state.currentDeviceId } } : { facingMode: state.facing });
         break;
       case 'fps':
-        state.want.fps = d.fps;
+        // Keep the render-loop / encoder frame rate in step with the requested
+        // one. Previously only state.want.fps changed, so the render loop kept
+        // producing 30fps into a 24fps canvas captureStream — the mismatch
+        // caused dropped/duplicated frames and visible jitter on the Studio.
+        setTargetFps(d.fps);
         await startCapture(state.currentDeviceId ? { deviceId: { exact: state.currentDeviceId } } : { facingMode: state.facing });
         break;
       case 'zoom': {
@@ -875,7 +949,15 @@ async function onControl(d) {
       case 'ping': break;
     }
   } catch (e) { console.warn('control failed', d.action, e); }
-  sendState(true);
+  // Don't echo a full telemetry payload for every control message: the Studio
+  // fires slider 'input' events at up to ~60Hz, and each reply forced a full
+  // card re-render there. Coalesce instead.
+  scheduleStateSend();
+}
+let _stateSendTimer = null;
+function scheduleStateSend(delay = 250) {
+  clearTimeout(_stateSendTimer);
+  _stateSendTimer = setTimeout(() => { _stateSendTimer = null; sendState(false); }, delay);
 }
 async function applyTorch(on) {
   try { await state.videoTrack.applyConstraints({ advanced: [{ torch: on }] }); }
@@ -1000,33 +1082,67 @@ async function collectStats() {
   if (!pc) { updateStatLine(); return; }
   try {
     const stats = await pc.getStats();
-    let totalBytes = 0, now = 0;
+    let totalBytes = 0, now = 0, frames = 0, haveFrames = false, fpsFallback = 0;
     stats.forEach(r => {
       if (r.type === 'outbound-rtp' && r.kind === 'video') {
         now = r.timestamp;
+        if (typeof r.framesEncoded === 'number') { frames = r.framesEncoded; haveFrames = true; }
+        else if (r.framesPerSecond) fpsFallback = r.framesPerSecond;
         if (state.lastStatT) {
           const dt = (now - state.lastStatT) / 1000;
-          if (dt > 0) {
-            totalBytes += (r.bytesSent - (state.lastBytes || 0)) * 8 / dt / 1000;
+          // Guard against counter resets (track replaced) producing absurd deltas.
+          const deltaBytes = r.bytesSent - (state.lastBytes || 0);
+          if (dt > 0 && deltaBytes >= 0) {
+            totalBytes += deltaBytes * 8 / dt / 1000;
           }
         }
-        if (r.framesPerSecond) state.outFps = Math.round(r.framesPerSecond);
+        // Track the raw cumulative counter — this is what the next delta is
+        // measured against. (Previously it was zeroed every tick, which made
+        // the reported bitrate wildly wrong / spiky.)
+        state.lastBytes = r.bytesSent;
       }
     });
-    if (now && state.lastStatT) {
-      state.lastBytes = 0; // recompute next tick from fresh stats
-      state.outKbps = Math.round(totalBytes);
+    if (now) {
+      if (state.lastStatT) {
+        state.outKbps = Math.round(totalBytes);
+        // Prefer framesEncoded over framesPerSecond: `framesPerSecond` is
+        // absent on many mobile browsers, which made the reported FPS fall
+        // back to a bogus 0/garbled value. framesEncoded is cumulative, so
+        // derive the rate from its delta over the same interval.
+        if (haveFrames) {
+          const dt = (now - state.lastStatT) / 1000;
+          const dF = frames - (state.lastFramesEncoded || 0);
+          if (dt > 0 && dF >= 0) state.outFps = Math.round(dF / dt);
+        } else if (fpsFallback) {
+          state.outFps = Math.round(fpsFallback);
+        }
+      }
+      // Always advance the baselines, including on the very first sample.
+      // (The baseline used to be advanced only inside the `if (state.lastStatT)`
+      // branch, and lastStatT starts at 0 — so it was NEVER set and the
+      // camera reported 0 kbps / 0 fps forever.)
       state.lastStatT = now;
+      state.lastFramesEncoded = haveFrames ? frames : state.lastFramesEncoded;
     }
     // ---- Adaptive quality: lower bitrate/fps when network is strained ----
+    // The bitrate ceiling we ASK the encoder for is the right yardstick here.
+    // Comparing the measured bitrate against those ceilings caused a feedback
+    // loop: low measured bitrate => "poor network" => lower ceiling => lower
+    // measured bitrate => ... which starved the encoder and caused the lag.
     const kbps = state.outKbps || 0;
-    if (kbps > 8000 && state.networkQuality === 'good') state.networkQuality = 'degraded';
-    else if (kbps > 12000) state.networkQuality = 'poor';
-    else if (kbps < 4000) state.networkQuality = 'good';
-    // Thermal: infer from FPS drop (device throttling itself)
-    if (state.currentFps && state.targetFps && state.currentFps < state.targetFps * 0.7) {
+    const ceilingKbps = state.maxBitrateKbps || 0;
+    if (ceilingKbps) {
+      // Only degrade when we are actually pinned against the ceiling, i.e. the
+      // encoder wants more than we allow and the link can't keep up.
+      if (kbps > ceilingKbps * 1.05) state.networkQuality = 'poor';
+      else if (kbps > ceilingKbps * 0.9 && state.networkQuality === 'good') state.networkQuality = 'degraded';
+      else if (kbps < ceilingKbps * 0.35 && state.networkQuality !== 'good') state.networkQuality = 'good';
+    }
+    // Thermal: infer from FPS drop (device throttling itself) — only escalate
+    // after sustained low fps (below 50% of target), not on a single bad second.
+    if (state.currentFps && state.targetFps && state.currentFps < state.targetFps * 0.5) {
       if (state.thermalLevel < 3) state.thermalLevel++;
-    } else if (state.thermalLevel > 0 && state.currentFps >= state.targetFps * 0.9) {
+    } else if (state.thermalLevel > 0 && state.currentFps >= state.targetFps * 0.85) {
       state.thermalLevel--;
     }
     // Re-tune sender when quality tier changes
@@ -1056,12 +1172,25 @@ async function initBattery() {
     const upd = () => {
       const level = Math.round(state.battery.level * 100);
       $('#battLine').textContent = `${state.battery.charging ? '⚡' : '🔋'} ${level}%`;
-      // Battery-aware quality: reduce resolution/fps when battery low and not charging
+      // Battery-aware quality: reduce resolution/fps when battery low and not charging.
+      // The Studio's requested frame rate is the ceiling — battery saver may
+      // only lower it, never raise it, and want.fps must be updated together
+      // with targetFps or the capture frame rate and the render rate diverge.
+      const base = state.requestedFps || 30;
+      let want = base;
       if (!state.battery.charging) {
-        if (level < 20 && state.targetFps !== 20) { state.targetFps = 20; tuneSenderForAll(); toast('🔋 Low battery — power-saver mode (20fps)', 3000); }
-        else if (level < 40 && state.targetFps !== 24) { state.targetFps = 24; tuneSenderForAll(); }
-        else if (level >= 40 && state.targetFps !== 30) { state.targetFps = 30; tuneSenderForAll(); }
-      } else if (state.targetFps !== 30) { state.targetFps = 30; tuneSenderForAll(); }
+        if (level < 20) want = Math.min(base, 20);
+        else if (level < 40) want = Math.min(base, 24);
+      }
+      if (state.targetFps !== want) {
+        const wasSaving = state.targetFps < base;
+        state.targetFps = want;
+        state.want.fps = want;
+        state._fpsCount = 0; state._fpsLastT = 0;
+        tuneSenderForAll();
+        refreshOutbound();
+        if (want < base && !wasSaving) toast(`🔋 Low battery — power-saver mode (${want}fps)`, 3000);
+      }
     };
     state.battery.addEventListener('levelchange', upd);
     state.battery.addEventListener('chargingchange', upd);
@@ -1202,6 +1331,38 @@ function touchDist(touches) {
 $('#leaveBtn').addEventListener('click', () => { exitLandscape(); location.reload(); });
 navigator.mediaDevices?.addEventListener?.('devicechange', () => { refreshLenses().then(publishCaps); });
 syncLocalButtons();
+
+/* --- PWA install: "Add to Home Screen" / native install prompt --- */
+let installPrompt = null;
+const installBtn = $('#installBtn');
+const iosHint = $('#iosInstallHint');
+const isIOS = /iPad|iPhone|iPod/.test(navigator.platform) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  // Chrome/Android: defer the built-in install prompt until the user taps our button.
+  e.preventDefault();
+  installPrompt = e;
+  if (installBtn) { installBtn.hidden = false; installBtn.removeAttribute('hidden'); }
+});
+
+if (installBtn) {
+  installBtn.addEventListener('click', async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    console.log('[AirStudio] install outcome:', outcome);
+    installPrompt = null;
+    if (installBtn) installBtn.hidden = true;
+  });
+}
+
+window.addEventListener('appinstalled', () => {
+  console.log('[AirStudio] AirStudio installed on home screen');
+  if (installBtn) installBtn.hidden = true;
+});
+
+// iOS Safari: there is no beforeinstallprompt — point users at Share → Add to Home Screen.
+if (isIOS && !navigator.standalone && iosHint) iosHint.style.display = 'block';
 </script>
 </body>
 </html>
