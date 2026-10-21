@@ -143,7 +143,25 @@ AirStudio — Phone-as-4K-Studio-Webcam software. Node.js + WebRTC server with w
 **Verification:** camera.html script syntax OK; 14/14 server+WS tests pass.
 **Status:** Committed `db8ddf5` and pushed to `main`; Render auto-deploy ON COMMIT → live at `https://airstudio.onrender.com`.
 
-### 12. Paystack Production Setup (PENDING)
+### 12. Live-Stream Lag, Frame-Rate Mismatch & Telemetry Fix (FIXED + DEPLOYED)
+**Problem:** Live stream lagged, reported FPS was wrong, bitrate telemetry read 0, and dragging a slider/PTZ pad flooded the signaling socket.
+
+**Root causes found & fixed:**
+- **Telemetry stuck at 0 (pre-existing bug):** `state.lastStatT` was only assigned *inside* a block gated on `state.lastStatT` being truthy — but it starts at `0` (falsy), so the baseline was **never** set. The camera reported 0 kbps / 0 fps forever, and the adaptive-quality logic ran against a permanently-zero reading. Baselines now always advance (including the first sample), with guards against counter resets on track replacement.
+- **FPS reported wrong:** `framesPerSecond` is absent on many mobile browsers. Now derived from the cumulative `framesEncoded` (camera) / `framesDecoded` (Studio) counters, with a `framesPerSecond` fallback.
+- **Frame-rate mismatch:** `state.want.fps` (Studio-requested) and `state.targetFps` (actual render rate) diverged — the render loop pushed 30 fps into a 24 fps `captureStream`, dropping/duplicating frames. Added `setTargetFps()` as the single owner of the frame rate; the canvas capture stream is now **recreated** when the rate changes (`captureStream(fps)` locks the rate at creation).
+- **Battery saver fought the Studio:** it hard-reset the rate to 30 fps, overriding a Studio request for 24/60. It now only *lowers* the Studio-requested ceiling.
+- **Encoder thrash:** `setParameters()` was called unconditionally ~60×/minute, re-initialising the hardware encoder and forcing keyframes. Now only called when the bitrate/framerate actually changed.
+- **Background blur cost:** a full-res `ctx.filter = blur()` per frame was the main frame-rate collapse. Now blurs a quarter-resolution plate (~16× cheaper) and scales it up.
+- **Control overhead:** slider `input` / PTZ `pointermove` fired up to ~60 signals/sec, each triggering a telemetry round-trip and a full Studio card re-render. Now throttled to an 80 ms trailing edge that flushes the final value (and any pending value when the action changes) → ~12 msgs/sec, identical end state. Camera telemetry replies to controls are coalesced (250 ms) instead of echoing a full payload per control.
+- **Studio DOM churn:** `renderCamLinks()` rebuilt its DOM on every card render (every telemetry message + 1 s poll). Now rebuilds only when the camera set changes.
+
+**Also included:** PWA support — new `public/service-worker.js` (installable app shell + offline fallback), registered from index/camera/studio/output, Apple meta tags, an in-page "Install AirStudio App" button (`beforeinstallprompt` + iOS Share→Add-to-Home-Screen hint), and `.webmanifest` served with the correct MIME type. Service worker uses **network-first** for pages/CSS/JS so hot-fixes reach installed clients immediately (icons stay cache-first).
+
+**Verification:** all inline `<script>` blocks parse; camera `state` object has no duplicate keys; runtime assertions confirm throttle coalescing/final-value/flush, exact bitrate+FPS computation, counter-reset guards and the `framesPerSecond` fallback; `test-ws.js` 5/5 pass against both `server.js` and `index.js` locally **and against live `wss://airstudio.onrender.com`**; every shell asset returns 200.
+**Status:** Committed `55868dd` + `b9f26c5`, pushed to `main`; Render auto-deploy ON COMMIT → live at `https://airstudio.onrender.com`; Vercel redeployed via CLI (`airstudio-b2qxf1sdd-velora-7d47.vercel.app`, aliased to `https://airstudiocam.vercel.app`). Both live builds verified to contain the new code. **Still needs on-device validation** (real capture at 24/30/60 fps, background blur, slider/PTZ feel, latency/jitter, offline PWA behaviour).
+
+### 13. Paystack Production Setup (PENDING)
 **Current state:** Paystack env vars are set in Render (`PAYSTACK_SECRET_KEY`, `PAYSTACK_PUBLIC_KEY`, prices, `BASE_URL`), `NODE_ENV=production` is set.
 **Plan:** Test live Paystack checkout → webhook key issuance flow end-to-end.
 
@@ -163,6 +181,8 @@ AirStudio — Phone-as-4K-Studio-Webcam software. Node.js + WebRTC server with w
 |----------|-----|---------|
 | Render | `https://airstudio.onrender.com` | Primary — full WebSocket signaling, multi-cam |
 | Vercel | `https://airstudiocam.vercel.app` | Static site + API health check only |
+
+Both are auto-deployed from `main` (Render on commit; Vercel via `vercel --prod`).
 
 ---
 
