@@ -54,15 +54,26 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Shell assets (CSS, JS, images, manifest): cache first, then network.
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((res) => {
+  // Icons: cache first (they are immutable in practice).
+  if (url.pathname.startsWith('/icons/')) {
+    event.respondWith(
+      caches.match(request).then((cached) => cached || fetch(request).then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((cache) => cache.put(request, copy));
         return res;
-      });
-    })
+      }))
+    );
+    return;
+  }
+
+  // CSS / JS / manifest: network first, cache fallback.
+  // Cache-first would pin users to a stale build after a hot-fix, which is
+  // exactly the wrong behaviour for this app (live fixes are pushed often).
+  event.respondWith(
+    fetch(request).then((res) => {
+      const copy = res.clone();
+      caches.open(CACHE).then((cache) => cache.put(request, copy));
+      return res;
+    }).catch(() => caches.match(request))
   );
 });
