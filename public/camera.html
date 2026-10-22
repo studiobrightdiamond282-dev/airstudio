@@ -825,6 +825,14 @@ async function makePeer(peerId) {
     updateStatLine();
     if (pc.connectionState === 'failed') { pc.close(); state.pcs.delete(peerId); setTimeout(() => makePeer(peerId), 1500); }
   };
+  // Auto-renegotiate when tracks are added/removed (e.g. mic toggled on/off).
+  pc.onnegotiationneeded = async () => {
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      relay(peerId, 'signal', { sdp: pc.localDescription });
+    } catch (e) { console.warn('negotiationneeded', e); }
+  };
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   relay(peerId, 'signal', { sdp: pc.localDescription });
@@ -1155,7 +1163,12 @@ function sendState(immediate) {
   relayRole('studio', 'state', {
     name: state.name,
     settings: { width: s.width, height: s.height, frameRate: s.frameRate, facingMode: s.facingMode },
-    want: state.want, fx: state.fx, processing: state.processing,
+    want: state.want,
+    fx: {
+      bgmode: state.fx.bgmode, bgPreset: state.fx.bgPreset, bgstrength: state.fx.bgstrength,
+      mirror: state.fx.mirror, lowlight: state.fx.lowlight, beauty: state.fx.beauty, autoframe: state.fx.autoframe
+    },
+    processing: state.processing,
     torch: state.torch, micOn: state.micOn, dim: state.dim,
     segFailed: state.segFailed, segReady: !!state.seg, faceReady: !!state.face, faceFailed: state.faceFailed,
     outKbps: state.outKbps, outFps: state.outFps,
@@ -1232,8 +1245,24 @@ $('#micBtn').addEventListener('click', async () => {
       const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       state.audioTrack = a.getAudioTracks()[0];
       if (state.audioTrack) {
-        state.rawStream.addTrack(state.audioTrack);
-        for (const pc of state.pcs.values()) { try { pc.addTrack(state.audioTrack, state.rawStream); } catch {} }
+        if (!state.rawStream.getTracks().includes(state.audioTrack)) state.rawStream.addTrack(state.audioTrack);
+        // Add/replace the audio sender on every peer connection and renegotiate
+        // so the remote side (Studio) receives the audio track. Without
+        // renegotiation the new track never reaches the Studio.
+        await Promise.all([...state.pcs.entries()].map(async ([pid, pc]) => {
+          try {
+            const hasAudio = pc.getSenders().some(s => s.track && s.track.kind === 'audio');
+            if (hasAudio) {
+              const s = pc.getSenders().find(x => x.track && x.track.kind === 'audio');
+              if (s.track !== state.audioTrack) s.replaceTrack(state.audioTrack);
+            } else {
+              pc.addTrack(state.audioTrack, state.rawStream);
+            }
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            relay(pid, 'signal', { sdp: pc.localDescription });
+          } catch (e) { console.warn('audio renegotiate', e); }
+        }));
         toast('🎙️ Microphone ON — phone audio is now in the program feed');
       }
     } catch (e) {

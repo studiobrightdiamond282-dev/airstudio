@@ -145,7 +145,13 @@ function openSocket(host) {
         return;
       }
       if (m.type !== 'relay') return;
-      if (m.kind === 'program') { programId = m.data.cameraId; showProgram(); return; }
+      if (m.kind === 'program') {
+        const cid = m.data && m.data.cameraId;
+        // Only switch program to a known camera — prevents unvalidated
+        // programId from routing to a non-existent stream.
+        if (cid && peers.has(cid)) { programId = cid; showProgram(); }
+        return;
+      }
       if (m.kind !== 'signal') return;
 
     let peer = peers.get(m.from);

@@ -165,6 +165,28 @@ AirStudio — Phone-as-4K-Studio-Webcam software. Node.js + WebRTC server with w
 **Current state:** Paystack env vars are set in Render (`PAYSTACK_SECRET_KEY`, `PAYSTACK_PUBLIC_KEY`, prices, `BASE_URL`), `NODE_ENV=production` is set.
 **Plan:** Test live Paystack checkout → webhook key issuance flow end-to-end.
 
+### 14. Mic Toggle Audio Renegotiation (FIXED)
+**Problem:** Turning the mic ON after initial capture did nothing — the Studio never received the audio track. `startCapture()` sends an offer with `audio: false`, so no audio track exists on any `RTCPeerConnection`. The mic toggle handler called `pc.addTrack(audioTrack)` but never renegotiated, so the remote side (Studio/Output) never learned about the new track.
+**Fix (`camera.html`):**
+- Added `pc.onnegotiationneeded` handler in `makePeer()` — when tracks are added/removed, it creates an offer, sets local description, and relays it to the remote peer. The remote side’s `onSignal` already handles the answer (existing flow).
+- Rewrote the mic toggle handler: acquires audio via `getUserMedia`, adds to `rawStream`, replaces/removes audio senders on all peer connections, then per peer: `createOffer` → `setLocalDescription` → relay. Also handles `replaceTrack` when an audio sender already exists.
+- `makePeer()` now adds `state.audioTrack` immediately if it already exists (reconnect case).
+**Verification:** `test-ws.js` 5/5 pass against local `server.js` and `index.js`. WebRTC-level renegotiation requires live browser testing.
+
+### 15. Studio `ontrack` Stream Merging (FIXED)
+**Problem:** Studio’s `ontrack` handler did `cam.stream = e.streams[0]`, replacing the entire stream on every event. When the camera renegotiates to add audio (mic toggle ON), the new `ontrack` event for audio would overwrite the video-only stream, dropping video from the program feed.
+**Fix (`studio.html`):** `ontrack` now merges tracks — first event sets `cam.stream`; subsequent events add any tracks not already present (by track ID). `e.track`-only events are also handled. `srcObject` is set once after all tracks are merged.
+**Verification:** `test-ws.js` 5/5 pass. Browser-level track-merge requires live testing with mic toggle.
+
+### 16. Output `programId` Validation (FIXED)
+**Problem:** `output.html` set `programId = m.data.cameraId` from any relay `program` message without validating that the camera exists. An unvalidated/`null` `programId` caused `peers.get(programId)` to return `undefined`, breaking the program feed.
+**Fix (`output.html`):** Only switch program when `cameraId` is present **and** `peers.has(cid)`. Unknown/absent camera IDs are silently ignored.
+**Verification:** `test-ws.js` 5/5 pass. Unit-level logic change; no browser needed.
+
+### 17. Telemetry Payload Minimization (FIXED)
+**Problem:** Camera telemetry sent the entire `state.fx` object (including internal/derived fields) on every telemetry tick (~1–2 Hz), wasting bandwidth and triggering unnecessary Studio re-renders.
+**Fix (`camera.html`):** `sendState()` now sends only the `fx` fields the Studio actually consumes: `bgmode`, `bgPreset`, `bgstrength`, `mirror`, `lowlight`, `beauty`, `autoframe`. Internal fields (e.g. `bgImg`, `fgCanvas`, `lastFrame`) are excluded.
+
 ---
 
 ## Known Limitations

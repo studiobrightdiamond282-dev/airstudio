@@ -554,7 +554,21 @@ async function onSignal(from, data) {
     cam.pc = pc;
     pc.onicecandidate = e => { if (e.candidate) relay(from, 'signal', { candidate: e.candidate }); };
     pc.ontrack = e => {
-      cam.stream = e.streams[0] || new MediaStream([e.track]);
+      if (e.streams && e.streams[0]) {
+        const stream = e.streams[0];
+        if (!cam.stream) {
+          cam.stream = stream;
+        } else {
+          // Merge tracks from subsequent ontrack events (e.g. audio added
+          // after the initial video-only offer) into the existing stream.
+          for (const track of stream.getTracks()) {
+            if (!cam.stream.getTracks().find(t => t.id === track.id)) cam.stream.addTrack(track);
+          }
+        }
+      } else if (e.track) {
+        if (!cam.stream) cam.stream = new MediaStream();
+        if (!cam.stream.getTracks().includes(e.track)) cam.stream.addTrack(e.track);
+      }
       if (cam.videoEl.srcObject !== cam.stream) cam.videoEl.srcObject = cam.stream;
       if (programId === from) { $('#programVideo').srcObject = cam.stream; showProgramChrome(); attachAudio(cam.stream); }
     };
