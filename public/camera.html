@@ -463,11 +463,12 @@ function tuneSender(sender) {
     const thermal = state.thermalLevel || 0;
     const net = state.networkQuality || 'good';
     // Bitrate ceilings tuned for smooth streaming on 4G/5G — prioritize quality.
-    // Keep ceilings high enough that the encoder isn't starved.
+    // Keep ceilings conservative by default so WiFi livestreaming stays smooth.
+    // Start low; adaptive quality will raise it only if the network stays clean.
     let maxKbps;
-    if (net === 'poor' || thermal >= 2) maxKbps = h >= 1000 ? 3500 : 2500;   // poor network / hot: low bitrate
-    else if (net === 'degraded' || thermal === 1) maxKbps = h >= 1000 ? 5000 : 3500;
-    else maxKbps = h >= 1000 ? 8000 : 5000;                                   // good network / cool: higher bitrate
+    if (net === 'poor' || thermal >= 2) maxKbps = h >= 1000 ? 2500 : 2000;   // poor network / hot: low bitrate
+    else if (net === 'degraded' || thermal === 1) maxKbps = h >= 1000 ? 3500 : 2500;
+    else maxKbps = h >= 1000 ? 5000 : 3500;                                   // good network / cool: conservative WiFi default
     // Remember the ceiling we applied so collectStats() can tell whether the
     // encoder is actually being starved (vs. simply sending less content).
     state.maxBitrateKbps = maxKbps;
